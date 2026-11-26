@@ -2,24 +2,17 @@
   "name": "phantom-ide",
   "productName": "PHANTOM",
   "version": "1.0.0",
-  "description": "PHANTOM \u2014 a hacker-workstation IDE built around a floating window system.",
+  "description": "PHANTOM — a hacker-workstation IDE built around a floating window system.",
   "main": "main/main.js",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/k4paz/Ohh-Phantom-IDE.git"
-  },
-  "bugs": {
-    "url": "https://github.com/k4paz/Ohh-Phantom-IDE/issues"
-  },
-  "homepage": "https://github.com/k4paz/Ohh-Phantom-IDE",
-  "keywords": ["electron", "ide", "developer-tools", "terminal", "monaco"],
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "test": "node tools/backend-test.js",
+    "test": "npm run test:backend",
     "test:backend": "node tools/backend-test.js",
-    "dist": "npx --yes electron-builder@26"
+    "dist": "npx --yes electron-builder@26",
+    "test:collab": "node tools/ot-test.js && node tools/collab-test.js",
+    "test:p2p": "node tools/p2p-test.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -27,6 +20,7 @@
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/xterm": "^5.5.0",
     "dompurify": "^3.2.4",
+    "hyperswarm": "^4.17.2",
     "marked": "^15.0.7",
     "monaco-editor": "0.52.2",
     "mysql2": "^3.12.0",
@@ -51,7 +45,10 @@
     ],
     "asarUnpack": [
       "node_modules/node-pty/**",
-      "node_modules/sql.js/dist/**"
+      "node_modules/sql.js/dist/**",
+      "node_modules/udx-native/**",
+      "node_modules/sodium-native/**",
+      "node_modules/bare-*/**"
     ],
     "linux": {
       "target": [

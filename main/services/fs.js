@@ -74,8 +74,11 @@ module.exports = (core) => ({
 
   'fs:rename': async (from, to) => {
     from = abs(from); to = abs(to);
-    try { await fsp.access(to); throw new Error('Target already exists'); } catch (e) { if (e.message === 'Target already exists') throw e; }
-    await fsp.rename(from, to);
+    // Case-only rename (Main.PY → main.py) on a case-insensitive filesystem: the "target" is the source itself.
+    const caseOnly = from !== to && from.toLowerCase() === to.toLowerCase() && (process.platform === 'win32' || process.platform === 'darwin');
+    if (!caseOnly) { try { await fsp.access(to); throw new Error('Target already exists'); } catch (e) { if (e.message === 'Target already exists') throw e; } }
+    if (caseOnly) { const tmp = `${from}.phantom-rename-${process.pid}`; await fsp.rename(from, tmp); await fsp.rename(tmp, to); }
+    else await fsp.rename(from, to);
     return to;
   },
 

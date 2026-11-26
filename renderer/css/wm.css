@@ -118,3 +118,19 @@ body.wm-busy { cursor: grabbing; }
 #boot .ok { color: var(--accent); } #boot .dim { color: var(--dim); text-shadow: none; } #boot .warn { color: var(--amber); }
 #boot .logo { color: var(--accent); font-weight: 700; line-height: 1.05; margin-bottom: 18px; font-size: 11px; }
 #boot .skip { position: absolute; right: 24px; bottom: 18px; color: var(--mute); text-shadow: none; }
+
+/* Ctrl+Tab window switcher */
+.wswitch { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(820px, 92vw); max-height: 70vh; display: none; flex-direction: column; background: var(--bg1); border: 1px solid var(--accent); box-shadow: var(--glow-strong), 0 30px 80px rgba(0,0,0,.8); z-index: 100000; animation: pal-in 120ms var(--ease); }
+.wswitch.on { display: flex; }
+.wswitch-hd { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line2); font-size: var(--fs-s); letter-spacing: .16em; color: var(--accent); }
+.wswitch-hd .c-mute { letter-spacing: 0; }
+.wswitch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; padding: 10px; overflow-y: auto; }
+.wswitch-it { display: grid; grid-template-columns: 18px 1fr; grid-template-rows: auto auto; column-gap: 8px; row-gap: 2px; align-items: center; padding: 9px 10px; border: 1px solid var(--line2); background: var(--bg2); cursor: pointer; min-width: 0; }
+.wswitch-it .ic { grid-row: span 2; display: grid; place-items: center; color: var(--dim); }
+.wswitch-it .ic svg { width: 15px; height: 15px; }
+.wswitch-it b { color: var(--fg-hi); font-weight: 500; text-transform: uppercase; letter-spacing: .1em; font-size: var(--fs-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wswitch-it span.c-dim { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wswitch-it.min { opacity: .6; }
+.wswitch-it:hover { border-color: var(--line3); }
+.wswitch-it.on { border-color: var(--accent); background: rgba(var(--accent-rgb), .1); box-shadow: var(--glow); opacity: 1; }
+.wswitch-it.on .ic { color: var(--accent); }

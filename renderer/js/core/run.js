@@ -151,6 +151,7 @@ export async function start({ debug = true } = {}) {
     toast('Open a file in the editor, or set a run command for this project (RUN menu).', 'warn', 'NOTHING TO RUN');
     return;
   }
+  if (file.startsWith('collab://')) { toast('This is a live-shared file that lives on the owner\'s computer. Ask them to run it, or Save As to get a local copy you can run.', 'warn', 'RUN'); return; }
   if (debug && /\.(m?js|cjs)$/i.test(file)) { await debugFile(file); return; }
   const p = await planFor(file);
   if (p.error) { toast(p.error, 'warn', 'RUN'); return; }

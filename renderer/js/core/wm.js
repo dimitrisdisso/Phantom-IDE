@@ -269,6 +269,31 @@ export class WindowManager {
     if (!quiet) this.changed('snap');
   }
 
+  /** Leave a snapped / maximized state and return to the size the window had before it was snapped. */
+  unsnap(win) {
+    if (win.max) { this.unmaximize(win); return; }
+    if (!win.snapZone) return;
+    const r = win.restoreRect || this.zoneRect('center');
+    win.snapZone = null; win.restoreRect = null;
+    win.rect = { x: Math.max(0, Math.min(r.x, this.W - 80)), y: Math.max(0, Math.min(r.y, this.H - TITLE_H)), w: Math.min(r.w, this.W), h: Math.min(r.h, this.H) };
+    this.animate(win); this.render(win); this.sync(win); this.changed('snap');
+  }
+  /** Win+arrow style arrangement of one window (bound to Ctrl+arrows and Ctrl+Alt+arrows). */
+  arrowSnap(win, key) {
+    if (!win || win.closed || win.min) return;
+    const z = win.max ? 'max' : win.snapZone;
+    const go = (zone) => (zone === 'restore' ? this.unsnap(win) : zone === 'min' ? this.minimize(win) : this.snap(win, zone));
+    const table = {
+      ArrowLeft: { right: 'restore', tr: 'tl', br: 'bl', tl: 'tl', bl: 'bl', left: 'left', r3: 'c3', c3: 'l3', l3: 'l3' },
+      ArrowRight: { left: 'restore', tl: 'tr', bl: 'br', tr: 'tr', br: 'br', right: 'right', l3: 'c3', c3: 'r3', r3: 'r3' },
+      ArrowUp: { left: 'tl', right: 'tr', bl: 'left', br: 'right', bottom: 'restore', tl: 'tl', tr: 'tr', max: 'max' },
+      ArrowDown: { max: 'restore', left: 'bl', right: 'br', tl: 'left', tr: 'right', top: 'restore', bl: 'bl', br: 'br' }
+    }[key];
+    if (!table) return;
+    const fallback = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'max', ArrowDown: z ? 'restore' : 'min' }[key];
+    go(table[z] || fallback);
+  }
+
   // ───────── workspaces ─────────
   switchWorkspace(i) {
     if (i === this.active || i < 0 || i >= WORKSPACES) return;
@@ -473,11 +498,11 @@ export class WindowManager {
     menu(x, y, [
       { header: win.title },
       { label: 'Always on top', check: win.pinned, action: () => this.setPinned(win, !win.pinned) },
-      { label: win.max ? 'Restore' : 'Maximize', action: () => this.toggleMax(win), key: '⌃⌥↑' },
-      { label: 'Minimize', action: () => this.minimize(win), key: '⌃⌥↓' },
+      { label: win.max ? 'Restore' : 'Maximize', action: () => this.toggleMax(win), key: '⌃↑' },
+      { label: 'Minimize', action: () => this.minimize(win), key: '⌃↓' },
       '-',
-      { label: 'Snap left half', action: () => this.snap(win, 'left'), key: '⌃⌥←' },
-      { label: 'Snap right half', action: () => this.snap(win, 'right'), key: '⌃⌥→' },
+      { label: 'Snap left half', action: () => this.snap(win, 'left'), key: '⌃←' },
+      { label: 'Snap right half', action: () => this.snap(win, 'right'), key: '⌃→' },
       { label: 'Snap top / bottom', action: () => this.snap(win, win.snapZone === 'top' ? 'bottom' : 'top') },
       { label: 'Snap quarter', action: () => this.snap(win, ['tl', 'tr', 'br', 'bl'][(['tl', 'tr', 'br', 'bl'].indexOf(win.snapZone) + 1) % 4]) },
       { label: 'Snap thirds', action: () => this.snap(win, ['l3', 'c3', 'r3'][(['l3', 'c3', 'r3'].indexOf(win.snapZone) + 1) % 3]) },
@@ -488,7 +513,7 @@ export class WindowManager {
       { label: 'Duplicate window', action: () => this.duplicate(win), disabled: !!win.app.singleton },
       { label: 'Rename…', action: async () => { const t = await prompt('Rename window', win.title); if (t !== null) win.setTitle(t.trim()); } },
       '-',
-      { label: 'Close', danger: true, action: () => this.close(win), key: '⌃⇧W' }
+      { label: 'Close', danger: true, action: () => this.close(win), key: '⌃W' }
     ]);
   }
   duplicate(win) {

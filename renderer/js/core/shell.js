@@ -8,13 +8,15 @@ import { menu, palette, toast, prompt, confirm, tooltip, fail } from './ui.js';
 import { plot } from './graph.js';
 import { dirtyDocs, normPath } from './docs.js';
 import * as run from './run.js';
+import * as live from './collab.js';
+import { newFile } from './files.js';
 
 export const DOCK = [
   ['editor', 'explorer', 'search', 'terminal', 'git'],
   ['debug', 'tests', 'build'],
   ['api', 'db', 'json', 'markdown'],
   ['sysmon', 'net', 'procs', 'logs', 'events'],
-  ['audit', 'ssh', 'arch']
+  ['collab', 'ssh', 'audit', 'arch']
 ];
 
 // Fractional layouts (desk 1×1) — scaled to the real desktop by restoreLayout.
@@ -86,14 +88,20 @@ export function commands() {
   out.push(
     { group: 'project', label: 'Open project folder…', icon: 'folder', key: 'Ctrl+O', run: pickProject },
     { group: 'project', label: 'Go to file…', icon: 'file', key: 'Ctrl+P', run: quickOpen },
+    { group: 'project', label: 'New file…', detail: 'name it with any extension', icon: 'file', key: 'Ctrl+F', run: () => newFile().catch(fail) },
     ...project.recent.map((r) => ({ group: 'project', label: `Open recent: ${basename(r)}`, detail: r, icon: 'folder', run: () => openProject(r) })),
     { group: 'run', label: 'Run: Start', icon: 'play', key: 'F5', run: () => run.start({ debug: true }) },
     { group: 'run', label: 'Run: Start without debugging', icon: 'play', key: 'Ctrl+F5', run: () => run.start({ debug: false }) },
     { group: 'run', label: 'Run: Stop', icon: 'stop', key: 'Shift+F5', run: run.stop },
     { group: 'run', label: 'Run: Restart', icon: 'refresh', key: 'Ctrl+Shift+F5', run: run.restart },
     { group: 'run', label: 'Run: Set project run command…', icon: 'settings', run: run.configure },
+    { group: 'live', label: 'Live: Open session window (host / join)', icon: 'collab', run: () => wm.open('collab') },
+    ...(live.session.role ? [{ group: 'live', label: 'Live: Share current file', icon: 'collab', run: () => { const f = run.activeFile(); if (f) live.share(f).catch(fail); else toast('open a file first', 'warn'); } },
+      { group: 'live', label: live.session.role === 'host' ? 'Live: End session' : 'Live: Leave session', icon: 'close', run: () => live.leave() }] : []),
     { group: 'window', label: 'Tile windows', icon: 'layout', key: 'Ctrl+Alt+T', run: () => wm.tile() },
     { group: 'window', label: 'Cascade windows', icon: 'layout', run: () => wm.cascade() },
+    { group: 'window', label: 'Switch window', icon: 'layout', key: 'Ctrl+Tab', run: () => { switcherStep(1); setTimeout(switcherCommit, 0); } },
+    { group: 'window', label: 'Close focused window', icon: 'close', key: 'Ctrl+W', run: () => wm.focused && wm.close(wm.focused) },
     { group: 'window', label: 'Show desktop', icon: 'layout', key: 'Ctrl+Alt+D', run: () => wm.showDesktop() },
     { group: 'window', label: 'Close all windows in this workspace', icon: 'close', run: async () => { for (const w of [...wm.windows]) if (w.ws === wm.active) await wm.close(w); } },
     { group: 'window', label: 'Toggle always-on-top for focused window', icon: 'pin', run: () => wm.focused && wm.setPinned(wm.focused, !wm.focused.pinned) },
@@ -160,6 +168,7 @@ function buildTopbar() {
       { label: 'Quit', danger: true, action: quit }
     ],
     PROJECT: () => [
+      { label: 'New file…', key: 'Ctrl+F', action: () => newFile().catch(fail) },
       { label: 'Open folder…', key: 'Ctrl+O', action: pickProject },
       { label: 'Go to file…', key: 'Ctrl+P', action: quickOpen, disabled: !project.root },
       { label: 'Search in project', key: 'Ctrl+Shift+F', action: () => wm.open('search'), disabled: !project.root },
@@ -188,6 +197,8 @@ function buildTopbar() {
       { label: 'Cascade', action: () => wm.cascade() },
       { label: 'Show desktop', key: 'Ctrl+Alt+D', action: () => wm.showDesktop() },
       { label: 'Cycle windows', key: 'Alt+`', action: () => wm.cycle(1) },
+      { label: 'Switch window', key: 'Ctrl+Tab', action: () => { switcherStep(1); setTimeout(switcherCommit, 0); } },
+      { label: 'Close window', key: 'Ctrl+W', action: () => wm.focused && wm.close(wm.focused), disabled: !wm.focused },
       '-',
       { label: 'Snapping to edges', check: settings.snap, action: () => setSetting('snap', !settings.snap) },
       { label: 'Magnetic alignment', check: settings.magnet > 0, action: () => setSetting('magnet', settings.magnet > 0 ? 0 : 10) },
@@ -326,19 +337,22 @@ function buildTaskbar() {
     status.innerHTML = `<span>${total} win · ws ${wm.active + 1}</span>` +
       (st.tasks ? `<span class="warn"><span class="spin"></span> ${st.tasks} task${st.tasks > 1 ? 's' : ''}</span>` : '') +
       (st.pty ? `<span class="${st.pty.native ? 'ok' : 'warn'}" title="${st.pty.native ? 'node-pty' : esc(st.pty.error || '')}">pty:${st.pty.native ? 'native' : 'bridge'}</span>` : '') +
+      (live.session.role ? `<button class="ok live-status" title="live session">⇄ LIVE ${live.session.peers.length}</button>` : '') +
       `<span class="ok">● online</span>`;
   };
   call('pty:info').then((i) => { st.pty = i; renderStatus(); }).catch(() => {});
   on('tasks:exit', () => call('tasks:running').then((r) => { st.tasks = r.length; renderStatus(); }));
   bus.on('tasks:started', () => call('tasks:running').then((r) => { st.tasks = r.length; renderStatus(); }));
   bus.on('wm:changed', renderStatus);
+  bus.on('collab:changed', renderStatus);
+  status.addEventListener('click', (e) => { if (e.target.closest('.live-status')) wm.open('collab'); });
   renderStatus();
 }
 
 function buildWallpaper() {
   const wp = document.getElementById('wallpaper');
   const sig = h('div.sig');
-  const hint = h('div.hint', { html: '<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> command palette &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>`</kbd> terminal &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>O</kbd> open project &nbsp;·&nbsp; <kbd>F5</kbd> run<br>drag windows to screen edges to snap · <kbd>Alt</kbd> while dragging disables magnets' });
+  const hint = h('div.hint', { html: '<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> command palette &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>`</kbd> terminal &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>O</kbd> open project &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>F</kbd> new file &nbsp;·&nbsp; <kbd>F5</kbd> run<br><kbd>Ctrl</kbd>+<kbd>Tab</kbd> switch windows · <kbd>Ctrl</kbd>+<kbd>W</kbd> close · <kbd>Ctrl</kbd>+arrows arrange · drag windows to screen edges to snap · <kbd>Alt</kbd> while dragging disables magnets' });
   wp.append(sig, hint);
   const upd = () => {
     const s = telemetry.static;
@@ -348,13 +362,63 @@ function buildWallpaper() {
   bus.on('wm:changed', upd); setTimeout(upd, 1500); upd();
 }
 
+// ───────── window switcher (Ctrl+Tab) ─────────
+// Hold Ctrl and tap Tab to walk the windows of this workspace in most-recently-used order;
+// release Ctrl to switch. Shift+Tab walks backwards, Esc cancels, a click picks directly.
+let sw = null;
+function switcherStep(dir) {
+  if (!sw) {
+    const cur = wm.windows.filter((w) => w.ws === wm.active && !w.closed);
+    if (!cur.length) return;
+    const list = [...wm.history].reverse().filter((w) => cur.includes(w));
+    for (const w of [...cur].sort((a, b) => b.z - a.z)) if (!list.includes(w)) list.push(w);
+    if (list.length === 1) { wm.restore(list[0]); wm.focus(list[0]); return; }
+    sw = { list, i: 0, el: h('div.wswitch'), shown: false };
+    sw.timer = setTimeout(() => { if (sw) { sw.shown = true; sw.el.classList.add('on'); } }, 120); // quick taps don't flash
+    document.getElementById('overlay-root').appendChild(sw.el);
+  }
+  sw.i = (sw.i + dir + sw.list.length) % sw.list.length;
+  renderSwitcher();
+}
+function renderSwitcher() {
+  sw.el.innerHTML = '';
+  sw.el.appendChild(h('div.wswitch-hd', `WINDOWS · workspace ${wm.active + 1}`, h('span.sp'), h('span.c-mute', 'Ctrl+Tab next · Shift back · release Ctrl to switch')));
+  const grid = h('div.wswitch-grid');
+  sw.list.forEach((w, i) => {
+    const card = h('div.wswitch-it' + (i === sw.i ? '.on' : '') + (w.min ? '.min' : ''), { html: `<span class="ic">${icon(w.app.icon)}</span><b>${esc(w.title)}</b><span class="c-dim">${esc(w.sub || (w.min ? 'minimized' : w.app.title))}</span>` });
+    card.addEventListener('mousedown', (e) => { e.preventDefault(); sw.i = i; switcherCommit(); });
+    grid.appendChild(card);
+  });
+  sw.el.appendChild(grid);
+}
+function switcherCommit() {
+  if (!sw) return;
+  const w = sw.list[sw.i]; clearTimeout(sw.timer); sw.el.remove(); sw = null;
+  if (w && !w.closed) { wm.restore(w); wm.focus(w); }
+}
+function switcherCancel() { if (!sw) return; clearTimeout(sw.timer); sw.el.remove(); sw = null; }
+
 // ───────── keyboard ─────────
+const overlayOpen = () => !!document.querySelector('#overlay-root .modal, #overlay-root .palette');
 function keybindings() {
   document.addEventListener('keydown', (e) => {
     const ctrl = e.ctrlKey || e.metaKey; const k = e.key;
     const f = wm.focused;
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
-    if (ctrl && e.shiftKey && (k === 'P' || k === 'p')) { stop(); commandPalette(); }
+    if (sw) {
+      if (k === 'Tab') { stop(); switcherStep(e.shiftKey ? -1 : 1); return; }
+      if (k === 'Escape') { stop(); switcherCancel(); return; }
+      if (k === 'Enter') { stop(); switcherCommit(); return; }
+      if (k === 'ArrowRight' || k === 'ArrowDown') { stop(); switcherStep(1); return; }
+      if (k === 'ArrowLeft' || k === 'ArrowUp') { stop(); switcherStep(-1); return; }
+      if (k === 'Control' || k === 'Meta' || k === 'Shift') return;
+      switcherCommit();
+    }
+    const plainCtrl = ctrl && !e.altKey;
+    if (plainCtrl && k === 'Tab') { stop(); if (!overlayOpen()) switcherStep(e.shiftKey ? -1 : 1); }
+    else if (plainCtrl && !e.shiftKey && (k === 'f' || k === 'F' || e.code === 'KeyF')) { stop(); if (!overlayOpen()) newFile().catch(fail); }
+    else if (plainCtrl && !e.shiftKey && (k === 'w' || k === 'W' || e.code === 'KeyW')) { stop(); if (f && !overlayOpen()) wm.close(f); }
+    else if (ctrl && e.shiftKey && (k === 'P' || k === 'p')) { stop(); commandPalette(); }
     else if (ctrl && !e.shiftKey && !e.altKey && (k === 'k' || k === 'K') && !(f && f.app.id === 'terminal')) { stop(); commandPalette(); }
     else if (ctrl && !e.shiftKey && !e.altKey && (k === 'p' || k === 'P')) { stop(); quickOpen(); }
     else if (ctrl && !e.shiftKey && (k === 'o' || k === 'O')) { stop(); pickProject(); }
@@ -377,16 +441,16 @@ function keybindings() {
     else if (ctrl && e.altKey && /^Digit[1-4]$/.test(e.code)) { stop(); const i = Number(e.code.slice(5)) - 1; if (e.shiftKey && f) wm.moveToWorkspace(f, i); else wm.switchWorkspace(i); }
     else if (ctrl && e.altKey && (k === 't' || k === 'T')) { stop(); wm.tile(); }
     else if (ctrl && e.altKey && (k === 'd' || k === 'D')) { stop(); wm.showDesktop(); }
-    else if (ctrl && e.altKey && f && k.startsWith('Arrow')) {
-      stop();
-      const z = f.snapZone; const m = f.max;
-      if (k === 'ArrowLeft') wm.snap(f, z === 'right' ? 'center' : z === 'tl' || z === 'bl' ? z : 'left');
-      else if (k === 'ArrowRight') wm.snap(f, z === 'left' ? 'center' : z === 'tr' || z === 'br' ? z : 'right');
-      else if (k === 'ArrowUp') { if (z === 'left') wm.snap(f, 'tl'); else if (z === 'right') wm.snap(f, 'tr'); else if (z === 'bl') wm.snap(f, 'left'); else if (z === 'br') wm.snap(f, 'right'); else wm.maximize(f); }
-      else if (k === 'ArrowDown') { if (m) wm.unmaximize(f); else if (z === 'left') wm.snap(f, 'bl'); else if (z === 'right') wm.snap(f, 'br'); else if (z === 'tl') wm.snap(f, 'left'); else if (z === 'tr') wm.snap(f, 'right'); else wm.minimize(f); }
+    else if (ctrl && !e.shiftKey && f && k.startsWith('Arrow') && (e.altKey || (settings.ctrlArrowSnap && !overlayOpen() && !isFormField(e.target)))) {
+      // Ctrl+arrows (like Win+arrows) and Ctrl+Alt+arrows: halves → quarters, ↑ maximize, ↓ restore / minimize.
+      stop(); wm.arrowSnap(f, k);
     }
   }, true);
+  document.addEventListener('keyup', (e) => { if (sw && (e.key === 'Control' || e.key === 'Meta')) switcherCommit(); }, true);
+  addEventListener('blur', () => switcherCommit());
 }
+// Plain text boxes (filters, forms) keep Ctrl+arrow word jumps; Monaco and xterm don't count.
+const isFormField = (t) => !!(t && t.matches && t.matches('input:not([type=checkbox]):not([type=range]), select, textarea.inp, textarea:not(.inputarea):not(.xterm-helper-textarea)'));
 
 async function quit() {
   const dirty = dirtyDocs();

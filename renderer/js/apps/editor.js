@@ -7,6 +7,8 @@ import { project } from '../core/project.js';
 import { menu, toast, fail, choice, prompt, splitter } from '../core/ui.js';
 import { wm } from '../core/wm.js';
 import * as run from '../core/run.js';
+import * as live from '../core/collab.js';
+import { newFile, askRename } from '../core/files.js';
 
 export default {
   id: 'editor', title: 'Editor', icon: 'editor', desc: 'Monaco code editor with tabs & split', size: [860, 560], key: 'Ctrl+P',
@@ -40,15 +42,27 @@ export default {
         const K = monaco.KeyMod; const C = monaco.KeyCode;
         g.editor.addCommand(K.CtrlCmd | C.KeyS, () => save(g));
         g.editor.addCommand(K.CtrlCmd | K.Shift | C.KeyS, () => saveAs(g));
-        g.editor.addCommand(K.CtrlCmd | C.KeyW, () => g.active && closeTab(g, g.active));
+        // Ctrl+W / Ctrl+Tab are window shortcuts (close window / switch window); tabs use Ctrl+F4 and Ctrl+PgUp/PgDn.
+        g.editor.addCommand(K.CtrlCmd | C.F4, () => g.active && closeTab(g, g.active));
+        g.editor.addCommand(C.F2, () => g.active && renameTab(g, g.active));
+        // Ctrl+F creates a new file, so Find moves to Ctrl+Alt+F (Ctrl+H find/replace and F3 still work).
+        g.editor.addCommand(K.CtrlCmd | K.Alt | C.KeyF, () => g.editor.getAction('actions.find').run());
         g.editor.addCommand(K.CtrlCmd | C.Backslash, () => toggleSplit());
         g.editor.addCommand(C.F9, () => { const p = g.editor.getPosition(); if (g.active && p) toggleBreakpoint(g.active, p.lineNumber); });
-        g.editor.addCommand(K.CtrlCmd | C.Tab, () => cycleTab(g, 1));
+        g.editor.addCommand(K.CtrlCmd | C.PageDown, () => cycleTab(g, 1));
+        g.editor.addCommand(K.CtrlCmd | C.PageUp, () => cycleTab(g, -1));
         g.editor.onMouseDown((e) => {
           const T = monaco.editor.MouseTargetType;
           if (g.active && (e.target.type === T.GUTTER_GLYPH_MARGIN || (e.target.type === T.GUTTER_LINE_DECORATIONS))) toggleBreakpoint(g.active, e.target.position.lineNumber);
         });
-        g.editor.onDidChangeCursorSelection(() => renderStatus(g));
+        g.editor.onDidChangeCursorSelection((e) => {
+          renderStatus(g);
+          const m = g.editor.getModel();
+          if (m && live.session.role) {
+            const sel = e.selection;
+            bus.emit('editor:cursor', { model: m, anchor: m.getOffsetAt({ lineNumber: sel.selectionStartLineNumber, column: sel.selectionStartColumn }), head: m.getOffsetAt(sel.getPosition()) });
+          }
+        });
         g.editor.onDidFocusEditorText(() => setActive(g));
         g.decos = g.editor.createDecorationsCollection([]);
       } else {
@@ -81,7 +95,7 @@ export default {
     }
 
     function setActive(g) { active = g; groups.forEach((x) => x.el.classList.toggle('on', x === g && groups.length > 1)); updateSub(); }
-    function updateSub() { const p = active && active.active; win.setSub(p ? rel(project.root, p) : ''); }
+    function updateSub() { const p = active && active.active; win.setSub(!p ? '' : live.isCollabPath(p) ? `⇄ live · ${basename(p)}` : rel(project.root, p)); }
 
     function layout() {
       root.innerHTML = '';
@@ -99,9 +113,10 @@ export default {
       for (const p of g.files) {
         const d = docs.get(p);
         const dirty = d && d.dirty; const conflict = d && d.conflict;
-        const t = h('button.tab' + (p === g.active ? '.on' : '') + (dirty ? '.dirty' : ''), { title: p, html: `<span class="fi fi-${esc(ext(p))}">${fileGlyph(p)}</span><span>${esc(basename(p))}</span>${conflict ? '<span class="c-amber">!</span>' : ''}<span class="x">${dirty ? '●' : '×'}</span>` });
+        const t = h('button.tab' + (p === g.active ? '.on' : '') + (dirty ? '.dirty' : ''), { title: p, html: `<span class="fi fi-${esc(ext(p))}">${fileGlyph(p)}</span><span>${esc(basename(p))}</span>${live.isCollabPath(p) || live.liveDocFor(p) ? '<span class="live-dot" title="live-shared">⇄</span>' : ''}${conflict ? '<span class="c-amber">!</span>' : ''}<span class="x">${dirty ? '●' : '×'}</span>` });
         t.addEventListener('click', (e) => { if (e.target.closest('.x')) closeTab(g, p); else activate(g, p); });
         t.addEventListener('auxclick', (e) => { if (e.button === 1) closeTab(g, p); });
+        t.addEventListener('dblclick', (e) => { if (!e.target.closest('.x')) renameTab(g, p); });
         t.addEventListener('contextmenu', (e) => { e.preventDefault(); tabMenu(g, p, e); });
         t.draggable = true;
         t.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/phantom-tab', JSON.stringify({ win: win.id, g: groups.indexOf(g), p })); });
@@ -125,7 +140,7 @@ export default {
         pos = `Ln ${lines.length}, Col ${lines[lines.length - 1].length + 1}`;
       }
       const bp = breakpoints.get(p);
-      g.status.innerHTML = `<span>${pos}${sel}</span><span>${esc(lang)}</span><span>${d.eol || 'LF'}</span><span>UTF-8</span><span>spaces:${settings.tabSize}</span>${bp && bp.size ? `<span class="c-red">● ${bp.size} bp</span>` : ''}<span class="sp"></span>${d.conflict ? '<span class="c-amber">changed on disk</span>' : d.dirty ? '<span class="c-amber">● modified</span>' : '<span class="c-acc">saved</span>'}`;
+      g.status.innerHTML = `<span>${pos}${sel}</span><span>${esc(lang)}</span><span>${d.eol || 'LF'}</span><span>UTF-8</span><span>spaces:${settings.tabSize}</span>${bp && bp.size ? `<span class="c-red">● ${bp.size} bp</span>` : ''}${live.liveDocFor(p) ? `<span class="c-cyan">⇄ LIVE · ${live.session.peers.length} in session</span>` : live.isCollabPath(p) ? '<span class="c-amber">⇄ offline copy</span>' : ''}<span class="sp"></span>${d.virtual ? (live.liveDocFor(p) ? '<span class="c-cyan">owner saves</span>' : '') : d.conflict ? '<span class="c-amber">changed on disk</span>' : d.dirty ? '<span class="c-amber">● modified</span>' : '<span class="c-acc">saved</span>'}`;
     }
 
     function decorate(g) {
@@ -194,6 +209,28 @@ export default {
       win.save();
     }
 
+    // Rename the file on disk (name and/or extension) and reopen it in the same tab slot, so the
+    // language mode follows the new extension.
+    async function renameTab(g, p) {
+      const target = await askRename(p);
+      if (!target) return;
+      const d = docs.get(p);
+      try {
+        if (d && d.dirty) await saveDoc(d);
+        await call('fs:rename', p, target);
+      } catch (e) { fail(e, 'RENAME'); return; }
+      const nt = normPath(target);
+      const slot = g.files.indexOf(p);
+      for (const gg of [...groups]) if (gg.files.includes(p)) await closeTab(gg, p, true);
+      if (!groups.includes(g)) g = active || groups[0]; // its split group closed with the last tab
+      if (!g.files.includes(nt)) {
+        try { await openDoc(nt); } catch (e) { fail(e, 'OPEN'); return; }
+        g.files.splice(Math.max(0, Math.min(slot, g.files.length)), 0, nt);
+      }
+      await activate(g, nt);
+      toast(`renamed to ${basename(nt)}`, 'info', 'RENAME', 1600);
+    }
+
     function cycleTab(g, dir) { if (g.files.length < 2) return; const i = g.files.indexOf(g.active); activate(g, g.files[(i + dir + g.files.length) % g.files.length]); }
 
     async function save(g) {
@@ -230,7 +267,8 @@ export default {
       menu(e.clientX, e.clientY, [
         { header: basename(p) },
         { label: 'Save', key: 'Ctrl+S', action: () => activate(g, p).then(() => save(g)) },
-        { label: 'Close', key: 'Ctrl+W', action: () => closeTab(g, p) },
+        { label: 'Rename / change extension…', key: 'F2', action: () => renameTab(g, p), disabled: live.isCollabPath(p) },
+        { label: 'Close tab', key: 'Ctrl+F4', action: () => closeTab(g, p) },
         { label: 'Close others', action: async () => { const others = g.files.filter((x) => x !== p); if (await confirmRelease(others)) for (const x of others) await closeTab(g, x, true); } },
         { label: 'Close to the right', action: async () => { const r = g.files.slice(g.files.indexOf(p) + 1); if (await confirmRelease(r)) for (const x of r) await closeTab(g, x, true); } },
         '-',
@@ -244,6 +282,8 @@ export default {
         isJson ? { label: 'Open in JSON viewer', action: () => wm.open('json', { state: { path: p } }) } : null,
         project.gitRoot ? { label: 'Diff against HEAD', action: () => wm.open('diff', { state: { root: project.gitRoot, file: p } }) } : null,
         /\.(m?js|cjs)$/.test(p) ? { label: 'Debug this file', action: () => wm.open('debug', { state: { program: p, autostart: true } }) } : null,
+        live.session.role && !live.isCollabPath(p) && !live.liveDocFor(p) ? { label: 'Share in live session', action: () => live.share(p).catch((e) => fail(e, 'SHARE')) } : null,
+        live.liveDocFor(p) && live.liveDocFor(p).owner ? { label: 'Stop sharing', action: () => live.unshare(live.liveDocFor(p).id) } : null,
         '-',
         { label: 'Copy path', action: () => copy(p) },
         { label: 'Copy relative path', action: () => copy(rel(project.root, p)) },
@@ -257,7 +297,9 @@ export default {
         { label: 'Save', key: 'Ctrl+S', action: () => save(g), disabled: !p },
         { label: 'Save as…', key: 'Ctrl+Shift+S', action: () => saveAs(g), disabled: !p },
         { label: 'Save all', action: async () => { for (const gg of groups) for (const f of gg.files) { const d = docs.get(f); if (d && d.dirty) await saveDoc(d).catch(fail); } } },
-        { label: 'New file…', action: async () => { const n = await prompt('New file', (project.root || '') + '/untitled.txt', { select: false }); if (n) { try { await call('fs:createFile', n); await openFile(n); } catch (er) { fail(er); } } } },
+        { label: 'New file…', key: 'Ctrl+F', action: () => newFile() },
+        { label: 'Rename / change extension…', key: 'F2', action: () => renameTab(g, p), disabled: !p || live.isCollabPath(p) },
+        { label: 'Find', key: 'Ctrl+Alt+F', action: () => g.editor && (g.editor.focus(), g.editor.getAction('actions.find').run()), disabled: !g.editor || !p },
         '-',
         { label: 'Command palette (editor)', key: 'F1', action: () => g.editor && (g.editor.focus(), g.editor.trigger('k', 'editor.action.quickCommand')) , disabled: !g.editor },
         { label: 'Format document', key: 'Shift+Alt+F', action: () => g.editor && g.editor.getAction('editor.action.formatDocument').run(), disabled: !g.editor },
@@ -282,7 +324,10 @@ export default {
 
     // reactive updates
     offs.push(bus.on('doc:dirty', (d) => { for (const g of groups) if (g.files.includes(d.path)) { renderTabs(g); if (g.active === d.path) renderStatus(g); } }));
-    offs.push(bus.on('doc:changed', (d) => { for (const g of groups) if (g.ta && g.active === d.path && !g.syncing && g.ta.value !== d.getValue()) g.ta.value = d.getValue(); }));
+    offs.push(bus.on('collab:remoteop', ({ model, op }) => { for (const g of groups) { const d = docs.get(g.active); if (g.ta && d && d.model === model) g.pendingSel = [op.transformIndex(g.ta.selectionStart), op.transformIndex(g.ta.selectionEnd)]; } }));
+    offs.push(bus.on('doc:changed', (d) => { for (const g of groups) if (g.ta && g.active === d.path && !g.syncing && g.ta.value !== d.getValue()) { const [a, z] = g.pendingSel || [g.ta.selectionStart, g.ta.selectionEnd]; g.pendingSel = null; g.ta.value = d.getValue(); g.ta.setSelectionRange(Math.min(a, g.ta.value.length), Math.min(z, g.ta.value.length)); } }));
+    offs.push(bus.on('collab:bound', (p) => { for (const g of groups) if (g.files.includes(p)) { renderTabs(g); renderStatus(g); } }));
+    offs.push(bus.on('collab:changed', () => { for (const g of groups) renderStatus(g); }));
     offs.push(bus.on('bp:changed', (p) => { for (const g of groups) if (g.active === p) { decorate(g); renderStatus(g); } }));
     offs.push(bus.on('debug:loc', () => { for (const g of groups) decorate(g); }));
     offs.push(bus.on('settings:changed', (k) => {

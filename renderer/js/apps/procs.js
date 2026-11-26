@@ -1,6 +1,7 @@
 // Process manager: sortable/filterable table, tree view, details, signals.
 import { h, esc, bytes, dur } from '../core/dom.js';
-import { call, poll } from '../core/api.js';
+import { call, poll, platform } from '../core/api.js';
+import { endProcess } from '../core/procctl.js';
 import { menu, confirm, toast, fail } from '../core/ui.js';
 import { wm } from '../core/wm.js';
 
@@ -61,12 +62,14 @@ export default {
       const p = data.procs.find((x) => x.pid === selPid);
       menu(e.clientX, e.clientY, [
         { header: `${p.name} (${p.pid})` },
-        { label: 'Terminate (SIGTERM)', danger: true, action: () => kill('SIGTERM') },
-        { label: 'Kill (SIGKILL)', danger: true, action: () => kill('SIGKILL') },
-        { label: 'Interrupt (SIGINT)', action: () => kill('SIGINT') },
-        { label: 'Suspend (SIGSTOP)', action: () => kill('SIGSTOP') },
-        { label: 'Continue (SIGCONT)', action: () => kill('SIGCONT') },
-        { label: 'Hang up (SIGHUP)', action: () => kill('SIGHUP') },
+        { label: platform === 'win32' ? 'End process' : 'Terminate (SIGTERM)', key: 'Del', danger: true, action: () => kill('SIGTERM') },
+        { label: 'End process tree', key: '⇧Del', danger: true, action: async () => { if (await endProcess(p, 'tree')) pollH.now(); } },
+        ...(platform === 'win32' ? [] : [
+          { label: 'Kill (SIGKILL)', danger: true, action: () => kill('SIGKILL') },
+          { label: 'Interrupt (SIGINT)', action: () => kill('SIGINT') },
+          { label: 'Suspend (SIGSTOP)', action: () => kill('SIGSTOP') },
+          { label: 'Continue (SIGCONT)', action: () => kill('SIGCONT') },
+          { label: 'Hang up (SIGHUP)', action: () => kill('SIGHUP') }]),
         '-',
         { label: 'Show sockets', action: () => wm.open('net', { state: { tab: 'conns', filter: String(p.pid) } }) },
         { label: 'Filter to children', action: () => { tree = true; treeBtn.classList.add('on'); render(); } },
@@ -93,6 +96,12 @@ export default {
       try { await call('proc:kill', p.pid, sig); toast(`${sig} → ${p.name} (${p.pid})`); pollH.now(); } catch (e) { fail(e, 'SIGNAL'); }
     }
 
+    table.tabIndex = 0;
+    table.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Delete' || !selPid) return;
+      e.preventDefault();
+      if (e.shiftKey) { const p = data && data.procs.find((x) => x.pid === selPid); if (await endProcess(p, 'tree')) pollH.now(); } else kill('SIGTERM');
+    });
     filterInp.addEventListener('input', () => { filter = filterInp.value; render(); win.save(); });
     const pollH = poll('proc:list', 2000, (d) => { if (paused) return; data = d; render(); }).when(() => win.visible).onError((e) => { stats.textContent = e.message; });
     return { serialize: () => ({ sortKey, sortDir, filter, tree, mine }), destroy: () => pollH.stop() };

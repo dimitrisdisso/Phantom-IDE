@@ -110,6 +110,28 @@ module.exports = (core) => {
     return inflight;
   }
 
+  const friendly = (e, pid) => {
+    if (e && e.code === 'EPERM') return new Error(`Access denied for pid ${pid}: it belongs to another user or to the system. Run PHANTOM as administrator to end it.`);
+    if (e && e.code === 'ESRCH') return new Error(`Process ${pid} has already exited`);
+    return e;
+  };
+  // PHANTOM's own process and everything above it (killing an ancestor's tree would take PHANTOM down).
+  async function protectedPids(procs) {
+    const byPid = new Map(procs.map((p) => [p.pid, p]));
+    const out = new Set([process.pid]);
+    let cur = byPid.get(process.pid); let guard = 0;
+    while (cur && cur.ppid && guard++ < 64) { out.add(cur.ppid); cur = byPid.get(cur.ppid); }
+    if (process.ppid) out.add(process.ppid);
+    return out;
+  }
+  function descendants(procs, root) {
+    const kids = new Map();
+    for (const p of procs) { if (!kids.has(p.ppid)) kids.set(p.ppid, []); kids.get(p.ppid).push(p.pid); }
+    const out = []; const seen = new Set([root]); const stack = [root];
+    while (stack.length) { const x = stack.pop(); for (const c of kids.get(x) || []) if (!seen.has(c)) { seen.add(c); out.push(c); stack.push(c); } }
+    return out;
+  }
+
   return {
     'proc:list': getList,
     'proc:kill': async (pid, signal = 'SIGTERM') => {
@@ -117,9 +139,36 @@ module.exports = (core) => {
       if (!Number.isInteger(pid) || pid <= 1) throw new Error('Invalid pid');
       if (pid === process.pid) throw new Error('Refusing to signal PHANTOM itself');
       if (!SIGNALS.has(signal)) throw new Error('Unsupported signal');
-      process.kill(pid, signal);
+      if (process.platform === 'win32' && !['SIGTERM', 'SIGKILL', 'SIGINT'].includes(signal)) throw new Error(`${signal} is not available on Windows — use End process`);
+      try { process.kill(pid, signal); } catch (e) { throw friendly(e, pid); }
+      cache.ts = 0;
       core.event('PROC', `sent ${signal} to pid ${pid}`, 'warn');
       return true;
+    },
+    // End a process together with every process it started.
+    'proc:killTree': async (pid) => {
+      pid = Number(pid);
+      if (!Number.isInteger(pid) || pid <= 4) throw new Error('Invalid pid');
+      const procs = (await getList()).procs;
+      const prot = await protectedPids(procs);
+      if (prot.has(pid)) throw new Error('Refusing: PHANTOM itself runs inside this process tree');
+      const kids = descendants(procs, pid);
+      if (kids.some((k) => prot.has(k))) throw new Error('Refusing: PHANTOM itself runs inside this process tree');
+      if (process.platform === 'win32') {
+        const r = await run('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 15000 });
+        if (r.code !== 0) {
+          const msg = (r.stderr || r.stdout).trim();
+          if (/access is denied/i.test(msg)) throw new Error(`Access denied for pid ${pid}: it belongs to another user or to the system. Run PHANTOM as administrator to end it.`);
+          if (/not found/i.test(msg)) throw new Error(`Process ${pid} has already exited`);
+          throw new Error(msg || `taskkill failed (${r.code})`);
+        }
+      } else {
+        for (const k of [...kids].reverse()) { try { process.kill(k, 'SIGTERM'); } catch { /* gone */ } }
+        try { process.kill(pid, 'SIGTERM'); } catch (e) { throw friendly(e, pid); }
+      }
+      cache.ts = 0;
+      core.event('PROC', `ended process tree of pid ${pid} (${kids.length + 1} processes)`, 'warn');
+      return kids.length + 1;
     },
     'proc:details': async (pid) => {
       pid = Number(pid);

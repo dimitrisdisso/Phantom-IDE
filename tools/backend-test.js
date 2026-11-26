@@ -47,14 +47,13 @@ const assert = (c, m) => { if (!c) throw new Error('assert: ' + m); };
   await t('pty:spawn + echo', async () => {
     let out = '';
     on('pty:data', (p) => { out += p.data; });
-    const opts = process.platform === 'win32'
-      ? { cwd: proj, cols: 100, rows: 30 }
-      : { cwd: proj, shell: '/bin/bash', args: ['--norc', '-i'], cols: 100, rows: 30 };
-    const s = await call('pty:spawn', opts);
+    const windows = process.platform === 'win32';
+    const shell = windows ? process.env.ComSpec || process.env.COMSPEC || 'cmd.exe' : '/bin/bash';
+    const args = windows ? ['/Q', '/D'] : ['--norc', '-i'];
+    const command = windows ? 'echo PHANTOM_42' : 'echo PHANTOM_$((40+2))';
+    const s = await call('pty:spawn', { cwd: proj, shell, args, cols: 100, rows: 30 });
     await sleep(400);
-    await call('pty:write', s.id, process.platform === 'win32'
-      ? 'Write-Output PHANTOM_42\r'
-      : 'echo PHANTOM_$((40+2))\r');
+    await call('pty:write', s.id, command + '\r');
     await sleep(700);
     const cwd = await call('pty:cwd', s.id);
     await call('pty:kill', s.id);

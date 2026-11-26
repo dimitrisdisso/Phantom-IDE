@@ -3,7 +3,7 @@ import { h, esc, time } from '../core/dom.js';
 import { call, on } from '../core/api.js';
 import { plot } from '../core/graph.js';
 
-const SOURCES = ['FS', 'GIT', 'PROC', 'NET', 'PTY', 'TASK', 'DEBUG', 'SEC', 'DB', 'SYS', 'APP', 'UI'];
+const SOURCES = ['FS', 'GIT', 'PROC', 'NET', 'PTY', 'TASK', 'DEBUG', 'SEC', 'DB', 'COLLAB', 'SYS', 'APP', 'UI'];
 
 export default {
   id: 'events', title: 'Event Stream', icon: 'events', desc: 'Live system event feed', size: [680, 460], min: [360, 200],
