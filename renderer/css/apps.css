@@ -1,5 +1,35 @@
 /* PHANTOM — tool window styles */
 
+/* ── agents ── */
+.ag-root { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.ag-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.ag-eyebrow { color: var(--accent); font-size: var(--fs-xs); letter-spacing: .14em; }
+.ag-head h2 { margin: 3px 0 0; color: var(--fg-hi); font-size: 19px; font-weight: 500; }
+.ag-project { display: flex; align-items: center; gap: 6px; max-width: 55%; color: var(--dim); font-size: var(--fs-xs); }
+.ag-project svg { width: 13px; height: 13px; color: var(--accent); flex: none; }
+.ag-project span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-note { margin: 0; padding: 9px 10px; border-left: 2px solid var(--cyan); background: var(--bg1); color: var(--dim); font-size: var(--fs-s); line-height: 1.5; }
+.ag-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 9px; }
+.ag-card { min-width: 0; display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); background: var(--bg1); padding: 11px; }
+.ag-card-head { display: flex; align-items: center; gap: 8px; }
+.ag-mark { width: 28px; height: 28px; display: grid; place-items: center; flex: none; border: 1px solid var(--line2); color: var(--accent); }
+.ag-mark svg { width: 16px; height: 16px; }
+.ag-title { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.ag-title h3 { margin: 0; color: var(--fg-hi); font-size: var(--fs-s); font-weight: 600; }
+.ag-title span { color: var(--dim); font-size: var(--fs-xs); }
+.ag-state { color: var(--mute); font-size: 9px; letter-spacing: .08em; }
+.ag-state.ready { color: var(--accent); }
+.ag-command, .ag-install { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ag-command > span, .ag-install > span { color: var(--mute); font-size: 9px; letter-spacing: .1em; }
+.ag-command code, .ag-install code { overflow-wrap: anywhere; color: var(--fg); font: var(--fs-xs)/1.45 var(--font); }
+.ag-install { padding-top: 7px; border-top: 1px solid var(--line); }
+.ag-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 4px; }
+.ag-card-foot .btn { font-size: var(--fs-xs); }
+.ag-docs { color: var(--cyan); font-size: var(--fs-xs); text-decoration: none; white-space: nowrap; }
+.ag-docs:hover { color: var(--fg-hi); }
+.ag-security { display: flex; flex-direction: column; gap: 4px; padding: 9px 10px; border: 1px solid var(--line); color: var(--dim); font-size: var(--fs-xs); line-height: 1.5; }
+.ag-security b { color: var(--amber); font-weight: 500; }
+
 /* ── editor ── */
 .ed-root { display: flex; flex: 1; min-height: 0; }
 .ed-group { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; position: relative; }

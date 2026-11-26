@@ -14,7 +14,7 @@ export const DOCK = [
   ['debug', 'tests', 'build'],
   ['api', 'db', 'json', 'markdown'],
   ['sysmon', 'net', 'procs', 'logs', 'events'],
-  ['audit', 'ssh', 'arch']
+  ['audit', 'ssh', 'arch', 'agents']
 ];
 
 // Fractional layouts (desk 1×1) — scaled to the real desktop by restoreLayout.

@@ -35,6 +35,13 @@ const assert = (c, m) => { if (!c) throw new Error('assert: ' + m); };
   fs.writeFileSync(path.join(proj, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: "node -e \"console.log('Tests: 3 passed, 3 total')\"", build: 'echo building' }, dependencies: { leftpad: '*' } }));
   fs.writeFileSync(path.join(proj, 'Dockerfile'), 'FROM node:latest\nCOPY . .\n');
 
+  console.log('\napp');
+  await t('app:info reports coding agent CLIs', async () => {
+    const info = await call('app:info');
+    for (const id of ['claude', 'copilot', 'codex']) assert(typeof info.tools[id] === 'boolean', `${id} availability`);
+    return ['claude', 'copilot', 'codex'].map((id) => `${id}:${info.tools[id] ? 'yes' : 'no'}`).join(' ');
+  });
+
   console.log('\nfs / store');
   await t('fs:list', async () => { const l = await call('fs:list', proj); assert(l[0].dir && l[0].name === 'src', 'dirs first'); return l.map((x) => x.name).join(' '); });
   await t('fs:write + read', async () => { const p = path.join(proj, 'x.txt'); await call('fs:write', p, 'hello\n'); const r = await call('fs:read', p); assert(r.content === 'hello\n', 'content'); fs.unlinkSync(p); return r.eol; });

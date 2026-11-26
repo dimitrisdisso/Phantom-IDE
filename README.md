@@ -11,6 +11,7 @@ PHANTOM is a desktop IDE built around a floating-window workstation. It combines
 - Monaco editor with shared models, split groups, breakpoints, and external-change detection
 - Real PTY terminals powered by `node-pty` with xterm.js
 - Integrated Git, search, debugger, test runner, build monitor, API tester, and database tools
+- Agent launcher for Claude Code, GitHub Copilot CLI, and Codex in project-scoped terminals
 - Live system, network, process, log, event, architecture, and security views
 - Local-first operation with no required cloud services or API keys
 - Sandboxed Electron renderer and an allowlisted IPC bridge
@@ -26,6 +27,9 @@ Optional tools unlock additional integrations:
 - `ripgrep` for faster project search
 - OpenSSH for SSH sessions
 - Language runtimes and build tools for running and debugging projects
+- Claude Code, GitHub Copilot CLI, and Codex CLI for the Agents hub
+
+The Agents hub detects installed CLIs and launches them in a terminal at the open project. Claude Code starts in manual permission mode; Codex starts in a read-only sandbox and requests approval for escalations; Copilot uses its interactive CLI defaults. Sign-in remains with each provider, and PHANTOM does not enable auto-approval or bypass modes.
 
 ## Quick start
 
