@@ -8,13 +8,16 @@ import { menu, palette, toast, prompt, confirm, tooltip, fail } from './ui.js';
 import { plot } from './graph.js';
 import { dirtyDocs, normPath } from './docs.js';
 import * as run from './run.js';
+import * as live from './collab.js';
+import { newFile } from './files.js';
+import { spaces, nameOf, newWorkspace, renameWorkspace, setWorkspaceFolder, deleteWorkspace, syncWorkspace } from './workspaces.js';
 
 export const DOCK = [
   ['editor', 'explorer', 'search', 'terminal', 'git'],
   ['debug', 'tests', 'build'],
   ['api', 'db', 'json', 'markdown'],
   ['sysmon', 'net', 'procs', 'logs', 'events'],
-  ['audit', 'ssh', 'arch']
+  ['collab', 'ssh', 'audit', 'arch']
 ];
 
 // Fractional layouts (desk 1×1) — scaled to the real desktop by restoreLayout.
@@ -62,8 +65,9 @@ export async function saveLayoutAs() {
 export async function loadLayout(name) {
   const l = (await layouts())[name];
   if (!l) return;
-  if (l.project && l.project !== project.root) await openProject(l.project, { silent: true });
   await wm.restoreLayout(l);
+  if (l.project && l.project !== project.root) await openProject(l.project, { silent: true });
+  else await syncWorkspace();
   toast(`layout "${name}" restored`, 'info', 'LAYOUT', 1800);
 }
 
@@ -72,12 +76,47 @@ export async function openFile(path, opts = {}) {
   path = normPath(path);
   let win = opts.newWindow ? null : wm.recent('editor');
   if (!win) win = await wm.open('editor', { state: {} });
-  else { if (win.ws !== wm.active) wm.switchWorkspace(win.ws); wm.restore(win); wm.focus(win); }
+  else { wm.restore(win); wm.focus(win); }
   for (let i = 0; i < 50 && !(win.instance && win.instance.openFile); i++) await new Promise((r) => setTimeout(r, 20));
   if (win.instance && win.instance.openFile) await win.instance.openFile(path, opts);
   return win;
 }
 bus.on('open-file', (p, opts) => openFile(p, opts).catch((e) => fail(e)));
+
+// ───────── window actions (shortcuts, menus, palette) ─────────
+/** The current workspace's windows in taskbar order (Ctrl+1…9 follow this). */
+const taskOrder = () => wm.windows.filter((w) => w.ws === wm.active && !w.closed).sort((a, b) => a.id - b.id);
+function focusNth(i) {
+  const w = taskOrder()[i];
+  if (!w) { toast(`there is no window ${i + 1} on this workspace`, 'info', 'WINDOW', 1200); return; }
+  wm.restore(w); wm.focus(w);
+}
+function duplicateFocused() {
+  const w = wm.focused;
+  if (!w) { toast('focus a window first', 'warn', 'WINDOW', 1500); return; }
+  if (w.app.singleton) { toast(`only one ${w.app.title} window can be open`, 'warn', 'WINDOW', 2000); return; }
+  wm.duplicate(w).catch(fail);
+}
+let clearing = false;
+/** Close every window on this workspace except the code editor(s). */
+async function closeAllButCode() {
+  if (clearing) return;
+  const list = taskOrder();
+  if (!list.some((w) => w.app.id === 'editor')) { toast('open a code file first: nothing was closed', 'warn', 'WINDOW'); return; }
+  clearing = true;
+  try {
+    wm.exitFullscreen();
+    for (const w of list) if (w.app.id !== 'editor' && !(await wm.close(w))) break;
+    const ed = wm.recent('editor'); if (ed) { wm.restore(ed); wm.focus(ed); }
+  } finally { clearing = false; }
+}
+function toggleFullscreenFocused() {
+  const w = wm.fsWin || wm.focused;
+  if (!w) { toast('focus a window first', 'warn', 'WINDOW', 1500); return; }
+  const entering = wm.fsWin !== w;
+  wm.toggleFullscreen(w);
+  if (entering) toast('Ctrl+Shift+F to leave full screen', 'info', 'FULL SCREEN', 1800);
+}
 
 // ───────── commands ─────────
 export function commands() {
@@ -86,18 +125,31 @@ export function commands() {
   out.push(
     { group: 'project', label: 'Open project folder…', icon: 'folder', key: 'Ctrl+O', run: pickProject },
     { group: 'project', label: 'Go to file…', icon: 'file', key: 'Ctrl+P', run: quickOpen },
+    { group: 'project', label: 'New file…', detail: 'name it with any extension', icon: 'file', key: 'Ctrl+F', run: () => newFile().catch(fail) },
     ...project.recent.map((r) => ({ group: 'project', label: `Open recent: ${basename(r)}`, detail: r, icon: 'folder', run: () => openProject(r) })),
     { group: 'run', label: 'Run: Start', icon: 'play', key: 'F5', run: () => run.start({ debug: true }) },
     { group: 'run', label: 'Run: Start without debugging', icon: 'play', key: 'Ctrl+F5', run: () => run.start({ debug: false }) },
     { group: 'run', label: 'Run: Stop', icon: 'stop', key: 'Shift+F5', run: run.stop },
     { group: 'run', label: 'Run: Restart', icon: 'refresh', key: 'Ctrl+Shift+F5', run: run.restart },
     { group: 'run', label: 'Run: Set project run command…', icon: 'settings', run: run.configure },
+    { group: 'live', label: 'Live: Open session window (host / join)', icon: 'collab', run: () => wm.open('collab') },
+    ...(live.session.role ? [{ group: 'live', label: 'Live: Share current file', icon: 'collab', run: () => { const f = run.activeFile(); if (f) live.share(f).catch(fail); else toast('open a file first', 'warn'); } },
+      { group: 'live', label: live.session.role === 'host' ? 'Live: End session' : 'Live: Leave session', icon: 'close', run: () => live.leave() }] : []),
     { group: 'window', label: 'Tile windows', icon: 'layout', key: 'Ctrl+Alt+T', run: () => wm.tile() },
     { group: 'window', label: 'Cascade windows', icon: 'layout', run: () => wm.cascade() },
+    { group: 'window', label: 'Switch window', icon: 'layout', key: 'Ctrl+Tab', run: () => { switcherStep(1); setTimeout(switcherCommit, 0); } },
+    { group: 'window', label: 'Close focused window', icon: 'close', key: 'Ctrl+W', run: () => wm.focused && wm.close(wm.focused) },
     { group: 'window', label: 'Show desktop', icon: 'layout', key: 'Ctrl+Alt+D', run: () => wm.showDesktop() },
     { group: 'window', label: 'Close all windows in this workspace', icon: 'close', run: async () => { for (const w of [...wm.windows]) if (w.ws === wm.active) await wm.close(w); } },
     { group: 'window', label: 'Toggle always-on-top for focused window', icon: 'pin', run: () => wm.focused && wm.setPinned(wm.focused, !wm.focused.pinned) },
-    ...[0, 1, 2, 3].map((i) => ({ group: 'window', label: `Switch to workspace ${i + 1}`, icon: 'layout', key: `Ctrl+Alt+${i + 1}`, run: () => wm.switchWorkspace(i) })),
+    { group: 'window', label: 'Duplicate current window', icon: 'layout', key: 'Ctrl+Shift+D', run: duplicateFocused },
+    { group: 'window', label: 'Close all windows except the code file', icon: 'close', key: 'Ctrl+Shift+R', run: closeAllButCode },
+    { group: 'window', label: 'Full screen the selected window', icon: 'max', key: 'Ctrl+Shift+F', run: toggleFullscreenFocused },
+    ...spaces.map((s, i) => ({ group: 'workspace', label: `Switch to ${s.name}`, detail: s.folder || '', icon: 'layout', key: `Ctrl+Alt+${i + 1}`, run: () => wm.switchWorkspace(i) })),
+    { group: 'workspace', label: 'New workspace…', detail: 'with its own folder', icon: 'folder', run: () => newWorkspaceWithWindows() },
+    { group: 'workspace', label: 'Rename this workspace…', icon: 'settings', run: () => renameWorkspace(wm.active) },
+    { group: 'workspace', label: "Change this workspace's folder…", icon: 'folder', run: () => setWorkspaceFolder(wm.active) },
+    { group: 'workspace', label: 'Delete this workspace…', icon: 'close', run: () => deleteWorkspace(wm.active) },
     { group: 'layout', label: 'Save layout as…', icon: 'save', key: 'Ctrl+Shift+L', run: saveLayoutAs },
     ...Object.keys(PRESETS).map((n) => ({ group: 'layout', label: `Preset: ${n}`, icon: 'layout', run: () => applyPreset(n) })),
     { group: 'theme', label: 'Toggle scanlines', icon: 'eye', run: () => setSetting('scanlines', !settings.scanlines) },
@@ -160,9 +212,11 @@ function buildTopbar() {
       { label: 'Quit', danger: true, action: quit }
     ],
     PROJECT: () => [
+      { label: 'New file…', key: 'Ctrl+F', action: () => newFile().catch(fail) },
       { label: 'Open folder…', key: 'Ctrl+O', action: pickProject },
+      { label: 'New workspace…', action: () => newWorkspaceWithWindows() },
       { label: 'Go to file…', key: 'Ctrl+P', action: quickOpen, disabled: !project.root },
-      { label: 'Search in project', key: 'Ctrl+Shift+F', action: () => wm.open('search'), disabled: !project.root },
+      { label: 'Search in project', key: 'Ctrl+Shift+H', action: () => wm.open('search'), disabled: !project.root },
       '-',
       { header: 'RECENT' },
       ...(project.recent.length ? project.recent.map((r) => ({ label: r.replace(project.home, '~'), check: r === project.root, action: () => openProject(r) })) : [{ label: 'none yet', disabled: true }])
@@ -188,6 +242,11 @@ function buildTopbar() {
       { label: 'Cascade', action: () => wm.cascade() },
       { label: 'Show desktop', key: 'Ctrl+Alt+D', action: () => wm.showDesktop() },
       { label: 'Cycle windows', key: 'Alt+`', action: () => wm.cycle(1) },
+      { label: 'Switch window', key: 'Ctrl+Tab', action: () => { switcherStep(1); setTimeout(switcherCommit, 0); } },
+      { label: 'Close window', key: 'Ctrl+W', action: () => wm.focused && wm.close(wm.focused), disabled: !wm.focused },
+      { label: 'Duplicate window', key: 'Ctrl+Shift+D', action: duplicateFocused, disabled: !wm.focused },
+      { label: 'Close all but the code file', key: 'Ctrl+Shift+R', action: closeAllButCode },
+      { label: 'Full screen window', key: 'Ctrl+Shift+F', action: toggleFullscreenFocused, disabled: !wm.focused },
       '-',
       { label: 'Snapping to edges', check: settings.snap, action: () => setSetting('snap', !settings.snap) },
       { label: 'Magnetic alignment', check: settings.magnet > 0, action: () => setSetting('magnet', settings.magnet > 0 ? 0 : 10) },
@@ -227,7 +286,6 @@ function buildTopbar() {
   const projEl = h('span.proj', { on: { click: pickProject } });
   const branchEl = h('span.branch');
   const ws = h('div.ws');
-  for (let i = 0; i < wm.workspaceCount(); i++) ws.appendChild(h('button', { title: `Workspace ${i + 1}  (Ctrl+Alt+${i + 1})`, on: { click: () => wm.switchWorkspace(i) } }, String(i + 1)));
   const meter = (label) => { const c = h('canvas'); const v = h('b', '—'); return { el: h('div.meter', label, c, v), c, v }; };
   const mCpu = meter('CPU'); const mMem = meter('MEM'); const mNet = meter('NET');
   const meters = h('div.meters', { on: { click: () => wm.open('sysmon') }, style: { cursor: 'pointer' } }, mCpu.el, mMem.el, mNet.el);
@@ -246,8 +304,22 @@ function buildTopbar() {
     branchEl.querySelector('svg') && Object.assign(branchEl.querySelector('svg').style, { width: '10px', height: '10px', verticalAlign: '-1px' });
   };
   bus.on('project:meta', meta); bus.on('project:changed', meta); meta();
-  const wsSync = () => [...ws.children].forEach((b, i) => { b.classList.toggle('on', i === wm.active); b.classList.toggle('has', wm.windows.some((w) => w.ws === i)); });
-  bus.on('wm:changed', wsSync); wsSync();
+  const wsSync = () => {
+    ws.innerHTML = '';
+    for (let i = 0; i < wm.workspaceCount(); i++) {
+      const sp = spaces[i];
+      ws.appendChild(h('button' + (i === wm.active ? '.on' : '') + (wm.windows.some((w) => w.ws === i) ? '.has' : ''), {
+        title: `${nameOf(i)}${sp && sp.folder ? '\n' + sp.folder : ''}\nCtrl+Alt+${i + 1} · right-click for options`,
+        on: { click: () => wm.switchWorkspace(i), contextmenu: (e) => { e.preventDefault(); e.stopPropagation(); workspaceMenu(i, e.clientX, e.clientY + 8); } }
+      }, String(i + 1)));
+    }
+    if (wm.workspaceCount() < wm.maxWorkspaces()) ws.appendChild(h('button.add', { title: 'New workspace with its own folder', on: { click: () => newWorkspaceWithWindows() } }, '+'));
+    ws.appendChild(h('span.ws-name', { title: 'Workspace options', on: { click: (e) => workspaceMenu(wm.active, e.clientX - 120, e.clientY + 12) } }, nameOf(wm.active)));
+  };
+  let wsKey = '';
+  // Rebuild only when something shown here changed (wm:changed fires on every focus).
+  const wsMaybe = () => { const k = JSON.stringify([wm.active, spaces, [...new Set(wm.windows.map((w) => w.ws))].sort()]); if (k !== wsKey) { wsKey = k; wsSync(); } };
+  bus.on('wm:changed', wsMaybe); bus.on('ws:changed', wsMaybe); wsMaybe();
   const tick = () => {
     const d = new Date();
     clock.innerHTML = `<span>${d.toISOString().slice(0, 10)}</span>${d.toTimeString().slice(0, 8)}`;
@@ -263,6 +335,28 @@ function buildTopbar() {
     plot(mNet.c, [{ data: last.map((x) => x.net.rx_sec + x.net.tx_sec), color: getComputedStyle(document.documentElement).getPropertyValue('--amber').trim() }], { grid: false, points: 40 });
     meters.title = `cpu ${pct(s.cpu.load, 1)} · mem ${bytes(s.mem.used)}/${bytes(s.mem.total)} · ↓${rate(s.net.rx_sec)} ↑${rate(s.net.tx_sec)}`;
   });
+}
+
+// ───────── workspaces ─────────
+function workspaceMenu(i, x, y) {
+  menu(x, y, [
+    { header: nameOf(i) },
+    { label: 'Switch to it', check: i === wm.active, action: () => wm.switchWorkspace(i), key: `Ctrl+Alt+${i + 1}` },
+    { label: 'Rename…', action: () => renameWorkspace(i) },
+    { label: 'Change folder…', action: () => setWorkspaceFolder(i) },
+    { label: 'Open folder in file manager', disabled: !(spaces[i] && spaces[i].folder), action: () => call('fs:openNative', spaces[i].folder).catch(fail) },
+    '-',
+    { label: 'New workspace…', action: () => newWorkspaceWithWindows(), disabled: wm.workspaceCount() >= wm.maxWorkspaces() },
+    { label: 'Delete workspace…', danger: true, action: () => deleteWorkspace(i), disabled: wm.workspaceCount() <= 1 }
+  ]);
+}
+/** A new workspace starts with an explorer, an editor and a terminal pointing at its folder. */
+async function newWorkspaceWithWindows() {
+  const i = await newWorkspace();
+  if (i === null) return;
+  await wm.restoreLayout({ v: 1, active: i, desk: { w: 1, h: 1 }, windows: [
+    ['explorer', 0, 0, 0.2, 1], ['terminal', 0.2, 0.68, 0.8, 0.32], ['editor', 0.2, 0, 0.8, 0.68]
+  ].map(([app, x, y, w, hh]) => ({ app, ws: i, rect: { x, y, w, h: hh }, state: {}, focused: app === 'editor' })) }, { replace: false });
 }
 
 // ───────── dock ─────────
@@ -282,7 +376,7 @@ function buildDock() {
         e.preventDefault();
         const wins = wm.ofApp(id);
         menu(e.clientX, e.clientY, [{ header: app.title }, { label: 'New window', action: () => wm.open(id) },
-          ...(wins.length ? ['-', ...wins.map((w) => ({ label: `${w.title}${w.sub ? ' · ' + w.sub.slice(-28) : ''}  [ws ${w.ws + 1}]`, action: () => { wm.switchWorkspace(w.ws); wm.restore(w); wm.focus(w); } })), '-', { label: `Close all (${wins.length})`, danger: true, action: () => wins.forEach((w) => wm.close(w)) }] : [])]);
+          ...(wins.length ? ['-', ...wins.map((w) => ({ label: `${w.title}${w.sub ? ' · ' + w.sub.slice(-28) : ''}  [${nameOf(w.ws)}]`, action: () => { wm.switchWorkspace(w.ws); wm.restore(w); wm.focus(w); } })), '-', { label: `Close all (${wins.length})`, danger: true, action: () => wins.forEach((w) => wm.close(w)) }] : [])]);
       });
       tooltip(b, app.title, app.key || '');
       dock.appendChild(b);
@@ -311,8 +405,8 @@ function buildTaskbar() {
   const render = () => {
     const list = wm.windows.filter((w) => w.ws === wm.active).sort((a, b) => a.id - b.id);
     tasks.innerHTML = '';
-    for (const w of list) {
-      const b = h('button.task' + (w === wm.focused ? '.focus' : '') + (w.min ? '.min' : ''), { 'data-win': w.id, title: `${w.title}${w.sub ? ' — ' + w.sub : ''}`, html: `${icon(w.app.icon)}<span>${esc(w.title)}${w.sub ? ' <span class="c-dim">' + esc(basename(w.sub)) + '</span>' : ''}</span>${w.pinned ? '<span class="pin">▲</span>' : ''}` });
+    for (const [n, w] of list.entries()) {
+      const b = h('button.task' + (w === wm.focused ? '.focus' : '') + (w.min ? '.min' : ''), { 'data-win': w.id, title: `${w.title}${w.sub ? ' — ' + w.sub : ''}`, html: `${n < 9 ? `<i class="tnum">${n + 1}</i>` : ''}${icon(w.app.icon)}<span>${esc(w.title)}${w.sub ? ' <span class="c-dim">' + esc(basename(w.sub)) + '</span>' : ''}</span>${w.pinned ? '<span class="pin">▲</span>' : ''}` });
       b.addEventListener('click', () => { if (w === wm.focused && !w.min) wm.minimize(w); else { wm.restore(w); wm.focus(w); } });
       b.addEventListener('auxclick', (e) => { if (e.button === 1) wm.close(w); });
       b.addEventListener('contextmenu', (e) => { e.preventDefault(); wm.windowMenu(w, e.clientX, e.clientY - 300); });
@@ -323,22 +417,26 @@ function buildTaskbar() {
   const st = { pty: null, events: 0, tasks: 0 };
   const renderStatus = () => {
     const total = wm.windows.length;
-    status.innerHTML = `<span>${total} win · ws ${wm.active + 1}</span>` +
+    status.innerHTML = `<span>${total} win · ws ${wm.active + 1} ${esc(nameOf(wm.active))}</span>` +
       (st.tasks ? `<span class="warn"><span class="spin"></span> ${st.tasks} task${st.tasks > 1 ? 's' : ''}</span>` : '') +
       (st.pty ? `<span class="${st.pty.native ? 'ok' : 'warn'}" title="${st.pty.native ? 'node-pty' : esc(st.pty.error || '')}">pty:${st.pty.native ? 'native' : 'bridge'}</span>` : '') +
+      (live.session.role ? `<button class="ok live-status" title="live session">⇄ LIVE ${live.session.peers.length}</button>` : '') +
       `<span class="ok">● online</span>`;
   };
   call('pty:info').then((i) => { st.pty = i; renderStatus(); }).catch(() => {});
   on('tasks:exit', () => call('tasks:running').then((r) => { st.tasks = r.length; renderStatus(); }));
   bus.on('tasks:started', () => call('tasks:running').then((r) => { st.tasks = r.length; renderStatus(); }));
   bus.on('wm:changed', renderStatus);
+  bus.on('collab:changed', renderStatus);
+  bus.on('ws:changed', renderStatus);
+  status.addEventListener('click', (e) => { if (e.target.closest('.live-status')) wm.open('collab'); });
   renderStatus();
 }
 
 function buildWallpaper() {
   const wp = document.getElementById('wallpaper');
   const sig = h('div.sig');
-  const hint = h('div.hint', { html: '<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> command palette &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>`</kbd> terminal &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>O</kbd> open project &nbsp;·&nbsp; <kbd>F5</kbd> run<br>drag windows to screen edges to snap · <kbd>Alt</kbd> while dragging disables magnets' });
+  const hint = h('div.hint', { html: '<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> command palette &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>`</kbd> terminal &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>O</kbd> open project &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>F</kbd> new file &nbsp;·&nbsp; <kbd>F5</kbd> run<br><kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> switch windows · <kbd>Ctrl</kbd>+<kbd>W</kbd> close · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> full screen · <kbd>Ctrl</kbd>+arrows arrange · drag windows to screen edges to snap · <kbd>Alt</kbd> while dragging disables magnets' });
   wp.append(sig, hint);
   const upd = () => {
     const s = telemetry.static;
@@ -348,18 +446,72 @@ function buildWallpaper() {
   bus.on('wm:changed', upd); setTimeout(upd, 1500); upd();
 }
 
+// ───────── window switcher (Ctrl+Tab) ─────────
+// Hold Ctrl and tap Tab to walk the windows of this workspace in most-recently-used order;
+// release Ctrl to switch. Shift+Tab walks backwards, Esc cancels, a click picks directly.
+let sw = null;
+function switcherStep(dir) {
+  if (!sw) {
+    const cur = wm.windows.filter((w) => w.ws === wm.active && !w.closed);
+    if (!cur.length) return;
+    const list = [...wm.history].reverse().filter((w) => cur.includes(w));
+    for (const w of [...cur].sort((a, b) => b.z - a.z)) if (!list.includes(w)) list.push(w);
+    if (list.length === 1) { wm.restore(list[0]); wm.focus(list[0]); return; }
+    sw = { list, i: 0, el: h('div.wswitch'), shown: false };
+    sw.timer = setTimeout(() => { if (sw) { sw.shown = true; sw.el.classList.add('on'); } }, 120); // quick taps don't flash
+    document.getElementById('overlay-root').appendChild(sw.el);
+  }
+  sw.i = (sw.i + dir + sw.list.length) % sw.list.length;
+  renderSwitcher();
+}
+function renderSwitcher() {
+  sw.el.innerHTML = '';
+  sw.el.appendChild(h('div.wswitch-hd', `WINDOWS · workspace ${wm.active + 1}`, h('span.sp'), h('span.c-mute', 'Ctrl+Tab next · Shift back · release Ctrl to switch')));
+  const grid = h('div.wswitch-grid');
+  sw.list.forEach((w, i) => {
+    const card = h('div.wswitch-it' + (i === sw.i ? '.on' : '') + (w.min ? '.min' : ''), { html: `<span class="ic">${icon(w.app.icon)}</span><b>${esc(w.title)}</b><span class="c-dim">${esc(w.sub || (w.min ? 'minimized' : w.app.title))}</span>` });
+    card.addEventListener('mousedown', (e) => { e.preventDefault(); sw.i = i; switcherCommit(); });
+    grid.appendChild(card);
+  });
+  sw.el.appendChild(grid);
+}
+function switcherCommit() {
+  if (!sw) return;
+  const w = sw.list[sw.i]; clearTimeout(sw.timer); sw.el.remove(); sw = null;
+  if (w && !w.closed) { wm.restore(w); wm.focus(w); }
+}
+function switcherCancel() { if (!sw) return; clearTimeout(sw.timer); sw.el.remove(); sw = null; }
+
 // ───────── keyboard ─────────
+const overlayOpen = () => !!document.querySelector('#overlay-root .modal, #overlay-root .palette');
 function keybindings() {
   document.addEventListener('keydown', (e) => {
     const ctrl = e.ctrlKey || e.metaKey; const k = e.key;
     const f = wm.focused;
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
-    if (ctrl && e.shiftKey && (k === 'P' || k === 'p')) { stop(); commandPalette(); }
+    if (sw) {
+      if (k === 'Tab') { stop(); switcherStep(e.shiftKey ? -1 : 1); return; }
+      if (k === 'Escape') { stop(); switcherCancel(); return; }
+      if (k === 'Enter') { stop(); switcherCommit(); return; }
+      if (k === 'ArrowRight' || k === 'ArrowDown') { stop(); switcherStep(1); return; }
+      if (k === 'ArrowLeft' || k === 'ArrowUp') { stop(); switcherStep(-1); return; }
+      if (k === 'Control' || k === 'Meta' || k === 'Shift') return;
+      switcherCommit();
+    }
+    const plainCtrl = ctrl && !e.altKey;
+    const digit = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+    // e.code = the physical key, so these also work with a Greek (or other non-Latin) layout active.
+    const shiftKey = plainCtrl && e.shiftKey ? { KeyD: duplicateFocused, KeyR: closeAllButCode, KeyF: toggleFullscreenFocused, KeyH: () => wm.open('search') }[e.code] : null;
+    if (plainCtrl && !e.shiftKey && digit) { stop(); if (!overlayOpen()) focusNth(Number(digit[1]) - 1); }
+    else if (shiftKey) { stop(); if (!overlayOpen() && !e.repeat) shiftKey(); }
+    else if (plainCtrl && k === 'Tab') { stop(); if (!overlayOpen()) switcherStep(e.shiftKey ? -1 : 1); }
+    else if (plainCtrl && !e.shiftKey && (k === 'f' || k === 'F' || e.code === 'KeyF')) { stop(); if (!overlayOpen()) newFile().catch(fail); }
+    else if (plainCtrl && !e.shiftKey && (k === 'w' || k === 'W' || e.code === 'KeyW')) { stop(); if (f && !overlayOpen()) wm.close(f); }
+    else if (ctrl && e.shiftKey && (k === 'P' || k === 'p')) { stop(); commandPalette(); }
     else if (ctrl && !e.shiftKey && !e.altKey && (k === 'k' || k === 'K') && !(f && f.app.id === 'terminal')) { stop(); commandPalette(); }
     else if (ctrl && !e.shiftKey && !e.altKey && (k === 'p' || k === 'P')) { stop(); quickOpen(); }
     else if (ctrl && !e.shiftKey && (k === 'o' || k === 'O')) { stop(); pickProject(); }
     else if (ctrl && k === '`') { stop(); wm.open('terminal', { state: { cwd: project.root } }); }
-    else if (ctrl && e.shiftKey && (k === 'F' || k === 'f')) { stop(); wm.open('search'); }
     else if (ctrl && e.shiftKey && (k === 'E' || k === 'e')) { stop(); wm.open('explorer'); }
     else if (ctrl && e.shiftKey && (k === 'G' || k === 'g')) { stop(); wm.open('git'); }
     else if (ctrl && e.shiftKey && (k === 'L' || k === 'l')) { stop(); saveLayoutAs(); }
@@ -374,19 +526,19 @@ function keybindings() {
       // with a live debug session, plain F5 falls through to the debugger (continue / pause)
     }
     else if (k === 'F11' && !document.body.dataset.debugPaused) { stop(); call('app:fullscreen'); }
-    else if (ctrl && e.altKey && /^Digit[1-4]$/.test(e.code)) { stop(); const i = Number(e.code.slice(5)) - 1; if (e.shiftKey && f) wm.moveToWorkspace(f, i); else wm.switchWorkspace(i); }
+    else if (ctrl && e.altKey && /^Digit[1-9]$/.test(e.code)) { stop(); const i = Number(e.code.slice(5)) - 1; if (e.shiftKey && f) wm.moveToWorkspace(f, i); else wm.switchWorkspace(i); }
     else if (ctrl && e.altKey && (k === 't' || k === 'T')) { stop(); wm.tile(); }
     else if (ctrl && e.altKey && (k === 'd' || k === 'D')) { stop(); wm.showDesktop(); }
-    else if (ctrl && e.altKey && f && k.startsWith('Arrow')) {
-      stop();
-      const z = f.snapZone; const m = f.max;
-      if (k === 'ArrowLeft') wm.snap(f, z === 'right' ? 'center' : z === 'tl' || z === 'bl' ? z : 'left');
-      else if (k === 'ArrowRight') wm.snap(f, z === 'left' ? 'center' : z === 'tr' || z === 'br' ? z : 'right');
-      else if (k === 'ArrowUp') { if (z === 'left') wm.snap(f, 'tl'); else if (z === 'right') wm.snap(f, 'tr'); else if (z === 'bl') wm.snap(f, 'left'); else if (z === 'br') wm.snap(f, 'right'); else wm.maximize(f); }
-      else if (k === 'ArrowDown') { if (m) wm.unmaximize(f); else if (z === 'left') wm.snap(f, 'bl'); else if (z === 'right') wm.snap(f, 'br'); else if (z === 'tl') wm.snap(f, 'left'); else if (z === 'tr') wm.snap(f, 'right'); else wm.minimize(f); }
+    else if (ctrl && !e.shiftKey && f && k.startsWith('Arrow') && (e.altKey || (settings.ctrlArrowSnap && !overlayOpen() && !isFormField(e.target)))) {
+      // Ctrl+arrows (like Win+arrows) and Ctrl+Alt+arrows: halves → quarters, ↑ maximize, ↓ restore / minimize.
+      stop(); wm.arrowSnap(f, k);
     }
   }, true);
+  document.addEventListener('keyup', (e) => { if (sw && (e.key === 'Control' || e.key === 'Meta')) switcherCommit(); }, true);
+  addEventListener('blur', () => switcherCommit());
 }
+// Plain text boxes (filters, forms) keep Ctrl+arrow word jumps; Monaco and xterm don't count.
+const isFormField = (t) => !!(t && t.matches && t.matches('input:not([type=checkbox]):not([type=range]), select, textarea.inp, textarea:not(.inputarea):not(.xterm-helper-textarea)'));
 
 async function quit() {
   const dirty = dirtyDocs();
@@ -434,6 +586,14 @@ export async function boot() {
   el.classList.add('out');
   setTimeout(() => el.remove(), 320);
 }
+
+let fsQueue = Promise.resolve(); let wasAppFullscreen = false;
+bus.on('wm:fullscreen', (on) => {
+  fsQueue = fsQueue.then(async () => {
+    if (on) wasAppFullscreen = await call('app:fullscreen', true);
+    else await call('app:fullscreen', !!wasAppFullscreen);
+  }).catch(() => {});
+});
 
 export function initShell() {
   buildTopbar();

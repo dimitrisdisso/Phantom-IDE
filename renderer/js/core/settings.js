@@ -14,7 +14,7 @@ export const THEMES = {
 export const DEFAULTS = {
   theme: 'phantom', accent: '', glow: 1, scanlines: false, grid: true, uiFontSize: 12,
   editorFontSize: 13, terminalFontSize: 13, minimap: true, wordWrap: false, tabSize: 2, autosave: false,
-  reduceMotion: false, snap: true, magnet: 10, boot: true, shell: '', cursorBlink: true, fontLigatures: true
+  reduceMotion: false, snap: true, magnet: 10, ctrlArrowSnap: true, boot: true, shell: '', cursorBlink: true, fontLigatures: true
 };
 
 export const settings = { ...DEFAULTS };

@@ -19,12 +19,25 @@ export async function initProject() {
   });
 }
 
+const flat = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+/** A repository rooted at the home folder (or above) doesn't count for a project somewhere inside it:
+ *  "git status" there walks the whole user profile, and it isn't the project's repository anyway. */
+function isOuterRepo(gitRoot, root) {
+  const g = flat(gitRoot); const r = flat(root); const home = flat(project.home);
+  return !!home && r !== g && (g === home || home.startsWith(g + '/'));
+}
+
 export async function refreshGit() {
-  if (!project.root) return;
+  const root = project.root;
+  if (!root) return;
+  let gitRoot = null; let branch = null;
   try {
-    project.gitRoot = await call('git:root', project.root);
-    project.branch = project.gitRoot ? (await call('git:status', project.gitRoot)).branch : null;
-  } catch { project.gitRoot = null; project.branch = null; }
+    gitRoot = await call('git:root', root);
+    if (gitRoot && isOuterRepo(gitRoot, root)) gitRoot = null;
+    if (gitRoot) branch = (await call('git:status', gitRoot)).branch;
+  } catch { gitRoot = null; branch = null; }
+  if (project.root !== root) return; // switched project while Git was working
+  project.gitRoot = gitRoot; project.branch = branch;
   bus.emit('git:changed');
   bus.emit('project:meta');
 }
@@ -39,11 +52,12 @@ export async function openProject(root, { silent = false } = {}) {
   if (project.root === root) return;
   if (project.root) call('watch:stop', project.root).catch(() => {});
   project.root = root; project.name = basename(root); filesPromise = null;
+  project.gitRoot = null; project.branch = null;
   call('watch:start', root).catch((e) => toast('file watching unavailable: ' + e.message, 'warn'));
   project.recent = [root, ...project.recent.filter((r) => r !== root)].slice(0, 12);
   call('store:set', 'recent', project.recent).catch(() => {});
-  await refreshGit();
   bus.emit('project:changed', root);
+  refreshGit(); // in the background: a slow repository must not delay opening the folder
   if (!silent) toast(root, 'info', 'PROJECT MOUNTED', 2200);
 }
 

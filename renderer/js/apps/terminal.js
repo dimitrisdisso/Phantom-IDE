@@ -107,7 +107,7 @@ export default {
       menu(e.clientX, e.clientY, [
         { label: 'Copy', key: 'Ctrl+Shift+C', action: () => copy(sel), disabled: !sel },
         { label: 'Paste', key: 'Ctrl+Shift+V', action: () => navigator.clipboard.readText().then((t) => session && call('pty:write', session.id, t)) },
-        { label: 'Find…', key: 'Ctrl+Shift+F', action: findBar, disabled: !search },
+        { label: 'Find…', action: findBar, disabled: !search },
         { label: 'Clear scrollback', action: () => term.clear() },
         '-',
         { label: 'Send Ctrl+C', action: () => session && call('pty:write', session.id, '\x03') },

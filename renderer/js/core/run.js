@@ -115,7 +115,8 @@ export async function configure() {
 
 // ── run terminal ──
 async function runTerminal() {
-  let w = wm.windows.find((x) => x.app.id === 'terminal' && x.instance && x.instance.isRun);
+  // Each workspace gets its own Run terminal, started in that workspace's folder.
+  let w = wm.windows.find((x) => x.ws === wm.active && x.app.id === 'terminal' && x.instance && x.instance.isRun);
   if (!w) w = await wm.open('terminal', { state: { cwd: project.root || undefined, title: 'Run', run: true } });
   for (let i = 0; i < 50 && !(w.instance && w.instance.exec); i++) await new Promise((r) => setTimeout(r, 20));
   if (w.ws !== wm.active) wm.switchWorkspace(w.ws);
@@ -128,9 +129,9 @@ async function saveAll() {
 }
 
 async function debugFile(file) {
-  const w = wm.recent('debug');
+  const w = wm.recent('debug') || wm.ofApp('debug')[0];
   if (w && w.instance && w.instance.apply) {
-    if (w.ws !== wm.active) wm.switchWorkspace(w.ws);
+    if (w.ws !== wm.active) wm.moveToWorkspace(w, wm.active);
     wm.restore(w);
     w.instance.apply({ program: file, autostart: true });
   } else await wm.open('debug', { state: { program: file, autostart: true }, focus: false });
@@ -151,6 +152,7 @@ export async function start({ debug = true } = {}) {
     toast('Open a file in the editor, or set a run command for this project (RUN menu).', 'warn', 'NOTHING TO RUN');
     return;
   }
+  if (file.startsWith('collab://')) { toast('This is a live-shared file that lives on the owner\'s computer. Ask them to run it, or Save As to get a local copy you can run.', 'warn', 'RUN'); return; }
   if (debug && /\.(m?js|cjs)$/i.test(file)) { await debugFile(file); return; }
   const p = await planFor(file);
   if (p.error) { toast(p.error, 'warn', 'RUN'); return; }
@@ -166,7 +168,8 @@ export function stop() {
     const d = wm.windows.find((x) => x.app.id === 'debug' && x.instance && x.instance.isActive && x.instance.isActive());
     if (d) { d.instance.stop(); return; }
   }
-  const w = wm.windows.find((x) => x.app.id === 'terminal' && x.instance && x.instance.isRun);
+  const runs = wm.windows.filter((x) => x.app.id === 'terminal' && x.instance && x.instance.isRun);
+  const w = runs.find((x) => x.ws === wm.active) || runs[0];
   if (w) w.instance.write('\x03');
 }
 

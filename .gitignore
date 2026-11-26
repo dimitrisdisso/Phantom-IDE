@@ -3,7 +3,5 @@ dist/
 out/
 *.log
 .DS_Store
-.env
-.env.*
-coverage/
-.vscode/
+.wrangler/
+relay/.wrangler/

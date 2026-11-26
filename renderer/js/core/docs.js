@@ -40,9 +40,14 @@ class TextModel {
   dispose() { this.fns.clear(); }
 }
 
+// Virtual document providers keyed by URI scheme (e.g. collab://) — used for live-shared files.
+const schemes = new Map();
+export function registerScheme(name, provider) { schemes.set(name, provider); }
+const schemeOf = (p) => { const m = /^([a-z]+):\/\//.exec(p); return m && schemes.has(m[1]) ? schemes.get(m[1]) : null; };
+
 class Doc {
-  constructor(path, model, mtime, eol) {
-    this.path = path; this.model = model; this.mtime = mtime; this.eol = eol;
+  constructor(path, model, mtime, eol, provider = null) {
+    this.path = path; this.model = model; this.mtime = mtime; this.eol = eol; this.provider = provider;
     this.saved = model.getAlternativeVersionId(); this.refs = 0; this.conflict = false; this.lastDirty = false;
     this.sub = model.onDidChangeContent(() => {
       const d = this.dirty;
@@ -52,7 +57,8 @@ class Doc {
     });
     this.autosaveT = null;
   }
-  get dirty() { return this.model.getAlternativeVersionId() !== this.saved; }
+  get dirty() { return !this.provider && this.model.getAlternativeVersionId() !== this.saved; }
+  get virtual() { return !!this.provider; }
   get name() { return basename(this.path); }
   getValue() { return this.model.getValue(); }
   autosave() { clearTimeout(this.autosaveT); this.autosaveT = setTimeout(() => saveDoc(this).catch(() => {}), 1200); }
@@ -60,11 +66,24 @@ class Doc {
 
 export const docs = new Map();
 
-export const normPath = (p) => (window.phantom && window.phantom.platform === 'win32' ? String(p).replace(/\//g, '\\').replace(/^([a-z]):/, (m, d) => d.toUpperCase() + ':') : String(p));
+// Virtual documents (collab://id/name, …) keep their forward slashes: rewriting them to
+// backslashes on Windows broke the scheme, so guests could never open a live-shared file.
+const isVirtual = (p) => /^[a-z][a-z0-9+.-]+:\/\//i.test(p);
+export const normPath = (p) => (window.phantom && window.phantom.platform === 'win32' && !isVirtual(String(p)) ? String(p).replace(/\//g, '\\').replace(/^([a-z]):/, (m, d) => d.toUpperCase() + ':') : String(p));
 
 export async function openDoc(path) {
-  path = normPath(path);
+  const provider = schemeOf(path);
+  if (!provider) path = normPath(path);
   let doc = docs.get(path);
+  if (!doc && provider) {
+    const v = await provider.open(path);
+    doc = docs.get(path);
+    if (!doc) {
+      doc = new Doc(path, v.model || new TextModel(v.text), Date.now(), v.eol, provider);
+      docs.set(path, doc);
+      if (v.after) v.after(doc);
+    }
+  }
   if (!doc) {
     const r = await call('fs:read', path);
     if (r.binary) throw new Error(`${basename(path)} is a binary file (${r.size} bytes)`);
@@ -87,6 +106,7 @@ export async function openDoc(path) {
 
 export function releaseDoc(doc) {
   if (--doc.refs > 0) return;
+  if (doc.provider && doc.provider.release) { try { doc.provider.release(doc); } catch (e) { console.error(e); } }
   docs.delete(doc.path);
   doc.sub.dispose();
   clearTimeout(doc.autosaveT);
@@ -95,6 +115,7 @@ export function releaseDoc(doc) {
 }
 
 export async function saveDoc(doc) {
+  if (doc.provider) return doc.provider.save(doc);
   const content = doc.getValue();
   const version = doc.model.getAlternativeVersionId();
   const r = await call('fs:write', doc.path, content);
