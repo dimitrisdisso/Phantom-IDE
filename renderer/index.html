@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+  <title>PHANTOM</title>
+  <link rel="stylesheet" href="vendor/xterm/css/xterm.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/wm.css">
+  <link rel="stylesheet" href="css/apps.css">
+</head>
+<body>
+  <div id="boot"></div>
+  <header id="topbar"></header>
+  <div id="stage">
+    <nav id="dock"></nav>
+    <main id="desktop"><div id="wallpaper"></div><div id="snap-preview"></div><div id="guides"></div></main>
+  </div>
+  <footer id="taskbar"></footer>
+  <div id="overlay-root"></div>
+  <div id="fx-scanlines"></div>
+
+  <!-- Vendor UMD bundles must load before the Monaco AMD loader (it defines `define`). -->
+  <script src="vendor/xterm/lib/xterm.js"></script>
+  <script src="vendor/xterm-fit/lib/addon-fit.js"></script>
+  <script src="vendor/xterm-search/lib/addon-search.js"></script>
+  <script src="vendor/xterm-links/lib/addon-web-links.js"></script>
+  <script src="vendor/marked/lib/marked.umd.js"></script>
+  <script src="vendor/dompurify/dist/purify.min.js"></script>
+  <script src="vendor/monaco/vs/loader.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
