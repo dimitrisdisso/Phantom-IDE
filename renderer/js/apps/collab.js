@@ -117,12 +117,18 @@ export default {
         const reachable = s.addresses.filter((a) => a.kind !== 'virtual');
         const lan = s.port ? (reachable.length ? reachable : s.addresses).map((a) => `${a.address}:${s.port}`).join(', ') : '';
         const inviteText = () => `Join my PHANTOM live session: open PHANTOM → Live Session, paste this and click JOIN.\ncode: ${s.code}${lan ? `\n(same network: ${lan})` : ''}`;
-        const net = {
-          connecting: h('div.c-dim.live-help.live-net', '◌ Connecting to the internet so others can join from anywhere…'),
-          online: h('div.c-acc.live-help.live-net', '✓ Online: anyone with the code can join from anywhere.'),
-          error: h('div.c-amber.live-help.live-net', `⚠ Not reachable over the internet yet. ${s.p2pError || ''} People on your network can still join.`),
-          off: h('div.c-amber.live-help.live-net', 'Internet joining is unavailable in this build: people on your network can still join.')
-        }[s.p2p] || null;
+        // Internet reachability = direct peer-to-peer OR the relay; either one is enough.
+        const st = [s.p2p, s.relay];
+        const overall = st.includes('online') ? 'online' : st.includes('connecting') ? 'connecting' : st.includes('error') ? 'error' : 'off';
+        const routes = [s.p2p === 'online' ? 'direct' : null, s.relay === 'online' ? 'relay' : null].filter(Boolean).join(' + ');
+        const net = h('div.live-net-box',
+          {
+            connecting: h('div.c-dim.live-help.live-net', '◌ Going online so others can join from anywhere…'),
+            online: h('div.c-acc.live-help.live-net', `✓ Online: anyone with the code can join from anywhere. `, h('span.c-mute', `(${routes})`)),
+            error: h('div.c-amber.live-help.live-net', `⚠ Not reachable over the internet yet. ${s.relayError || s.p2pError || ''} People on your network can still join.`),
+            off: h('div.c-amber.live-help.live-net', 'Internet joining is unavailable in this build: people on your network can still join.')
+          }[overall],
+          s.relay === 'off' && overall !== 'off' ? h('div.c-mute.live-help', 'No relay configured: people on strict networks (mobile data, some ISPs) may not be able to connect. See relay/README.md.') : null);
         head.append(
           h('div.hdr', 'HOSTING', h('span.sp'), h('span.pill.c-acc', '● live')),
           h('div.live-code', { title: 'click to copy', on: { click: () => { copy(s.code); toast('session code copied'); } } }, s.code),

@@ -278,7 +278,8 @@ mark { background: rgba(var(--amber-rgb), .3); color: var(--fg-hi); }
 .ev-chip { border: 1px solid currentColor; background: none; font-size: 9px; letter-spacing: .1em; padding: 1px 5px; cursor: pointer; }
 .ev-chip.off { opacity: .3; }
 .ev-rate { display: flex; align-items: center; gap: 10px; padding: 2px 8px; border-bottom: 1px solid var(--line); flex: none; font-size: var(--fs-xs); }
-.ev-spark { flex: 1; height: 22px; }
+.ev-spark { flex: 1; min-width: 0; height: 22px; }
+.ev-rate > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ev-list { font-size: var(--fs-s); padding: 2px 0; }
 .ev { display: flex; gap: 10px; padding: 1px 8px; white-space: nowrap; animation: ev-in 300ms; }
 @keyframes ev-in { from { background: rgba(var(--accent-rgb), .12); } }
@@ -382,3 +383,13 @@ mark { background: rgba(var(--amber-rgb), .3); color: var(--fg-hi); }
 .live-adv[open] > summary::before { content: "▾ "; }
 .live-adv[open] { gap: 8px; }
 .live-net { padding: 4px 0; }
+
+/* Narrow Git window: changes on top, diff / log underneath, instead of a squeezed side column. */
+.pw[data-app="git"] .pw-body { container-type: inline-size; }
+@container (max-width: 480px) {
+  .pw[data-app="git"] .split-h { flex-direction: column; }
+  .pw[data-app="git"] .split-h > .git-left { width: auto !important; min-width: 0; flex: 1 1 55% !important; min-height: 0; overflow: auto; }
+  .pw[data-app="git"] .split-h > .git-left ~ * { flex: 1 1 45%; min-height: 0; }
+  .pw[data-app="git"] .split-h > .gutter-x { display: none; }
+}
+@container (max-width: 480px) { .pw[data-app="git"] .split-h > .git-left > .git-changes { flex: 1 0 66px; } }

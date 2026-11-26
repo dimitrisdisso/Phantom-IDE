@@ -27,7 +27,8 @@ module.exports = (core) => {
     'app:maximize': async () => w() && w().toggleMaximize(),
     'app:close': async () => w() && w().close(),
     'app:devtools': async () => w() && w().devtools(),
-    'app:fullscreen': async () => w() && w().fullscreen(),
+    // no argument toggles; true/false sets. Resolves to the state before the call.
+    'app:fullscreen': async (on) => (w() ? w().fullscreen(on) : false),
     'app:openExternal': async (url) => {
       if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) throw new Error('Only http(s) URLs can be opened');
       if (!core.hooks.openExternal) throw new Error('Not available in this runtime');

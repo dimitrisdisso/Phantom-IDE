@@ -14,6 +14,7 @@ npm start        # launch PHANTOM
 npm run dev      # launch with DevTools detached
 npm run test:backend   # exercise every backend service against your real OS (plain Node)
 npm run test:p2p       # internet collaboration: join with only the code (needs internet)
+npm run test:relay     # collaboration through the relay (start it: cd relay && npx wrangler@4 dev)
 npm run dist     # build installers with electron-builder (fetched on demand via npx)
 ```
 
@@ -34,14 +35,27 @@ For the intended look, install a programming font such as **JetBrains Mono**, Fi
 | Keyboard snap | **Ctrl+←/→/↑/↓** like Win+arrows: halves → quarters, ↑ maximize, ↓ restore/minimize (also **Ctrl+Alt+arrows**). Turn off Ctrl+arrows in Settings to keep word jumps in the editor/terminal |
 | Switch windows | **Ctrl+Tab** (hold Ctrl, tap Tab, release to switch; **Ctrl+Shift+Tab** goes back) |
 | Close window | **Ctrl+W** (unsaved files still ask first) |
+| Jump to a window | **Ctrl+1…9** focuses that window of the current workspace (the numbers are on the taskbar) |
+| Duplicate window | **Ctrl+Shift+D** |
+| Close all but the code | **Ctrl+Shift+R** closes every window on the workspace except the editor(s). Running terminals are ended |
+| Full screen window | **Ctrl+Shift+F** shows the focused window over the whole screen; press again to go back |
 | Always on top | pin button or title right-click (amber frame) |
 | Minimize / maximize / close | title buttons · double-click title · middle-click title or taskbar to close |
 | Multiple instances | every tool can be opened many times (Shift+click a dock icon, or "Duplicate window") |
-| Workspaces | **Ctrl+Alt+1–4** switch · **Ctrl+Alt+Shift+1–4** move the focused window |
+| Workspaces | **Ctrl+Alt+1–9** switch · **Ctrl+Alt+Shift+1–9** move the focused window · see below |
 | Arrange | **Ctrl+Alt+T** tile · cascade · **Ctrl+Alt+D** show desktop · **Alt+`** cycle |
 | Layouts | **Ctrl+Shift+L** saves every window on all workspaces, including open files, terminal folders and tool state. Restore from the LAYOUT menu, or use a preset (Dev station, Recon/ops, Debug bay, API lab, Security sweep, Architecture) |
 
 The session (project, windows, positions, states) is saved automatically and restored on launch.
+
+### Workspaces with their own folders
+
+Each workspace has a name, its own windows and **its own folder**. Switching workspace also switches the project: the explorer, **Ctrl+F** (new file), new terminals, search and Git work in that folder.
+
+- **New:** the **+** next to the workspace numbers. Name it, then let PHANTOM create a folder (`PHANTOM Workspaces/<name>` in your home folder) or pick an existing one. It opens with an explorer, editor and terminal.
+- **Rename, change folder, delete:** right-click a workspace number (or click its name). Deleting a workspace never deletes its folder or files.
+- **Ctrl+O** on a workspace changes that workspace's folder. Up to 9 workspaces.
+- A Git repository rooted at your home folder is ignored for folders inside it.
 
 ## Running programs (F5, like Visual Studio)
 
@@ -68,15 +82,15 @@ Two or more people (up to 9) can edit the same file at the same time, each seein
 
 How it works:
 - **Sync:** operational transformation (`renderer/js/shared/ot.js`, the same family of algorithm as Google Docs). The host orders all edits, so everyone converges to identical text even when typing in the same spot at the same time.
-- **Connection:** peer-to-peer over the internet using [Hyperswarm](https://github.com/holepunchto/hyperswarm). The code is turned (scrypt, separate salt) into an anonymous 32-byte topic. The host announces that topic on the public Hyperswarm DHT and guests look it up. The DHT then punches a hole through both routers, so the computers connect directly with no server in between. The DHT's public bootstrap nodes only help peers find each other; they never see the code, the key or your files. On the same network, a direct TCP connection (port 7457) is tried in parallel and whichever connects first wins. Announcing usually takes a few seconds, sometimes up to ~20.
+- **Connection:** peer-to-peer over the internet using [Hyperswarm](https://github.com/holepunchto/hyperswarm). The code is turned (scrypt, separate salt) into an anonymous 32-byte topic. The host announces that topic on the public Hyperswarm DHT and guests look it up. The DHT then punches a hole through both routers, so the computers connect directly with no server in between. The DHT's public bootstrap nodes only help peers find each other; they never see the code, the key or your files. On the same network, a direct TCP connection (port 7457) is tried in parallel and whichever connects first wins. When a direct link isn't possible, PHANTOM falls back to the **relay** (below). Announcing usually takes a few seconds, sometimes up to ~20.
 - **Encryption:** the session code is never sent. Both sides derive an AES-256-GCM key from it with scrypt, so all traffic, including your code, is encrypted and authenticated. A connection with the wrong code can't read or send anything; it's rejected and logged to the event stream, and an address is locked out for a minute after 5 failed attempts. Each new session gets a fresh 80-bit code.
-- **Network limits:** hole punching works on most home and mobile connections. It can fail on strict corporate/school networks or when *both* people are behind the most restrictive (symmetric) NATs; the join then times out with a clear message. Windows Firewall only matters for the optional direct same-network connection: **ALLOW THROUGH FIREWALL** under *Same-network options* adds the rule (administrator prompt).
+- **Relay (Cloudflare):** some networks (mobile data, CGNAT, strict office/school Wi-Fi) block direct connections. For those, both sides connect out to a small relay on Cloudflare's free Workers plan, which forwards the already-encrypted bytes (it never sees the code or your files). Deploy it once and put its `wss://` address in `phantomRelay` in `package.json`: see [relay/README.md](relay/README.md). Without a relay, people on those networks can't connect. Windows Firewall only matters for the optional direct same-network connection: **ALLOW THROUGH FIREWALL** under *Same-network options* adds the rule (administrator prompt).
 - **Ending:** if the host ends the session, guests keep their open shared files as local copies they can *Save As*.
 
 ## Tools
 
 - **Editor** (Monaco): tabs, split groups (Ctrl+\\, drag tabs between groups or windows), IntelliSense for JS/TS/JSON/CSS/HTML, word-based completion everywhere, shared models across all editor windows, external-change detection with conflict warning, breakpoints (gutter/F9), optional autosave. Rename a file or change its extension with **F2** or by double-clicking its tab. **Ctrl+F4** closes a tab and **Ctrl+PgUp/PgDn** switch tabs. Find is **Ctrl+Alt+F** (Ctrl+H for replace), because Ctrl+F creates a new file.
-- **Terminal** (xterm.js + node-pty): real shells, 256-colour/truecolor, scrollback search (Ctrl+Shift+F), clickable links, copy/paste (Ctrl+Shift+C/V). The working directory is tracked so layouts reopen terminals in the right folder.
+- **Terminal** (xterm.js + node-pty): real shells, 256-colour/truecolor, scrollback search (right-click → Find), clickable links, copy/paste (Ctrl+Shift+C/V). The working directory is tracked so layouts reopen terminals in the right folder.
 - **Explorer**: lazy tree, git status colours, create/rename/duplicate/trash (to the system trash), open-with menus, keyboard navigation.
 - **Search**: project-wide search powered by ripgrep (built-in fallback). Supports regex, case and whole-word options, include/exclude globs, and replace-all with confirmation.
 - **Git**: stage, unstage, discard, commit/amend, inline diffs, side-by-side Monaco diff, ASCII graph log with commit inspection, branches/checkout, fetch, pull (ff-only), push (auto-sets upstream), stash.
@@ -95,7 +109,7 @@ How it works:
 - **Architecture**: a force-directed import graph for JS/TS (including tsconfig path aliases), Python, Go, Rust and CSS. Directory clustering, cycle detection (Tarjan SCC), most-imported/most-dependent lists, optional external packages. Double-click a module to open it.
 - **Markdown / JSON viewers**: live markdown preview (sanitised with DOMPurify, follows unsaved edits) and a collapsible JSON tree with path copy, filtering and JSON Lines support.
 
-Global keys: **F5** run · **Ctrl+Shift+P** command palette · **Ctrl+P** go to file (`file:line`) · **Ctrl+O** open folder · **Ctrl+`** terminal · **Ctrl+Shift+F/E/G** search/explorer/git · **Ctrl+,** settings · **Ctrl+F** new file (type any name.extension) · **Ctrl+W** close window · **Ctrl+Tab** switch window · **Ctrl+arrows** arrange window · **F11** fullscreen.
+Global keys: **F5** run · **Ctrl+Shift+P** command palette · **Ctrl+P** go to file (`file:line`) · **Ctrl+O** open folder · **Ctrl+`** terminal · **Ctrl+Shift+H/E/G** search/explorer/git · **Ctrl+,** settings · **Ctrl+F** new file (type any name.extension) · **Ctrl+W** close window · **Ctrl+Tab** switch window · **Ctrl+arrows** arrange window · **F11** fullscreen.
 
 Themes: PHANTOM, FSOCIETY, E CORP, AMBER CRT, DARK ARMY, ICEBREAKER, GHOST. You can also set a custom accent, glow intensity, scanlines and grid.
 
@@ -119,6 +133,7 @@ tools/
   backend-test.js  integration tests for every service (runs in plain Node)
   ot-test.js       randomised convergence tests for the collaboration engine
   p2p-test.js      host + guest find each other on the internet DHT with only the code (needs internet)
+  relay-test.js    host + 2 guests through the Cloudflare relay only (run relay/ locally or pass its URL)
   collab-test.js   host + 2 guests over real encrypted TCP, concurrent editing
   devbridge.js     dev harness: serves the renderer over HTTP with the real backend (for UI testing)
 ```

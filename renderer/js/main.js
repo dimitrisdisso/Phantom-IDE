@@ -5,6 +5,7 @@ import { wm } from './core/wm.js';
 import { initShell, boot, applyPreset } from './core/shell.js';
 import { initProject, openProject, project } from './core/project.js';
 import { loadBreakpoints, loadMonaco } from './core/docs.js';
+import { initWorkspaces, startWorkspaces } from './core/workspaces.js';
 import { debounce } from './core/dom.js';
 import { toast } from './core/ui.js';
 
@@ -44,6 +45,7 @@ async function main() {
   initShell();
   const booting = boot();
   await initProject();
+  await initWorkspaces(); // before windows are restored: it decides how many workspaces exist
   startTelemetry();
   loadBreakpoints().catch(() => {});
   loadMonaco(); // warm up in the background
@@ -61,6 +63,8 @@ async function main() {
     await applyPreset('Dev station', { replace: false });
     toast('Drag windows by their title bar. Throw them at screen edges to snap. Ctrl+Shift+P opens the command palette.', 'info', 'WELCOME TO PHANTOM', 9000);
   }
+
+  await startWorkspaces();
 
   const persist = () => call('store:set', 'session', { project: project.root, layout: wm.serialize(), ts: Date.now() }).catch(() => {});
   bus.on('wm:persist', debounce(persist, 900));

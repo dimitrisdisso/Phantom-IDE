@@ -3,6 +3,7 @@
 // with encryption, three OT clients type concurrently, and all copies must converge.
 // Usage: node tools/collab-test.js   (direct TCP only; tools/p2p-test.js covers internet joining)
 process.env.PHANTOM_P2P = '0';
+process.env.PHANTOM_RELAY = '';
 const os = require('os');
 const fs = require('fs');
 const path = require('path');

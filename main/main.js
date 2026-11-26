@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, protocol, shell, dialog, net, session, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, shell, dialog, net, session, Menu, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -56,8 +56,12 @@ function registerProtocol() {
 }
 
 function createWindow() {
+  // Never open bigger than the screen; on screens smaller than the preferred size, start maximized.
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  const small = area.width <= 1600 || area.height <= 960;
   mainWindow = new BrowserWindow({
-    width: 1600, height: 960, minWidth: 900, minHeight: 560,
+    width: Math.min(1600, area.width), height: Math.min(960, area.height),
+    minWidth: Math.min(900, area.width), minHeight: Math.min(560, area.height),
     backgroundColor: '#050807',
     frame: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
@@ -72,7 +76,7 @@ function createWindow() {
       devTools: true
     }
   });
-  mainWindow.once('ready-to-show', () => { mainWindow.show(); if (DEV) mainWindow.webContents.openDevTools({ mode: 'detach' }); });
+  mainWindow.once('ready-to-show', () => { if (small) mainWindow.maximize(); mainWindow.show(); if (DEV) mainWindow.webContents.openDevTools({ mode: 'detach' }); });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -134,7 +138,7 @@ app.whenReady().then(() => {
         toggleMaximize: () => (mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize()),
         close: () => mainWindow.close(),
         devtools: () => mainWindow.webContents.toggleDevTools(),
-        fullscreen: () => mainWindow.setFullScreen(!mainWindow.isFullScreen()),
+        fullscreen: (on) => { const was = mainWindow.isFullScreen(); mainWindow.setFullScreen(typeof on === 'boolean' ? on : !was); return was; },
         isMaximized: () => mainWindow.isMaximized()
       },
       versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node }

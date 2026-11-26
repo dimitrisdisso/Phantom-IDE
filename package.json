@@ -12,7 +12,8 @@
     "test:backend": "node tools/backend-test.js",
     "dist": "npx --yes electron-builder@26",
     "test:collab": "node tools/ot-test.js && node tools/collab-test.js",
-    "test:p2p": "node tools/p2p-test.js"
+    "test:p2p": "node tools/p2p-test.js",
+    "test:relay": "node tools/relay-test.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -71,5 +72,9 @@
   },
   "engines": {
     "node": ">=20.17"
-  }
+  },
+  "allowScripts": {
+    "electron@37.10.3": true
+  },
+  "phantomRelay": "wss://phantom-relay.dimitrisdisso.workers.dev"
 }

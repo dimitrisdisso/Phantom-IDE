@@ -78,7 +78,13 @@ export default {
       render();
     }
 
-    function setRoot(r) { root = r; cache.clear(); open.clear(); sel = null; render(); refreshGit(); win.save(); }
+    // Expanded folders are remembered per root, so switching workspaces and back keeps the tree open.
+    const openByRoot = new Map();
+    function setRoot(r) {
+      if (root) openByRoot.set(root, [...open]);
+      root = r; cache.clear(); open.clear(); for (const p of openByRoot.get(r) || []) open.add(p);
+      sel = null; render(); refreshGit(); win.save();
+    }
 
     async function activate(row, how = 'open') {
       const p = row.dataset.path;

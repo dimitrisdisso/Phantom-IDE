@@ -157,8 +157,10 @@ registerScheme('collab', {
 // ───────── public API ─────────
 export async function host({ name, port }) {
   const r = await call('collab:host', { name, port });
-  Object.assign(session, { role: 'host', me: r.me, peers: r.peers, docs: r.docs, code: r.code, port: r.port, addresses: r.addresses, firewall: r.firewall || null, p2p: r.p2p || 'off', p2pError: null, chat: [] });
+  Object.assign(session, { role: 'host', me: r.me, peers: r.peers, docs: r.docs, code: r.code, port: r.port, addresses: r.addresses, firewall: r.firewall || null, p2p: r.p2p || 'off', p2pError: null, relay: r.relay || 'off', relayError: null, chat: [] });
   refreshPeerStyles(); changed();
+  // Status updates can arrive before this call returns (a fast relay): re-read so none is lost.
+  call('collab:status').then((st) => { if (session.role === 'host' && st.role === 'host') { session.p2p = st.p2p || session.p2p; session.relay = st.relay || session.relay; changed(); } }).catch(() => {});
   return r;
 }
 export async function join({ address, code, name }) {
@@ -219,6 +221,7 @@ on('collab:msg', async (m) => {
     case 'left': toast(`${m.peer.name} left the session`, 'info', 'LIVE', 2500); break;
     case 'docs': session.docs = m.docs; changed(); break;
     case 'p2p': session.p2p = m.state; session.p2pError = m.error || null; changed(); break;
+    case 'relay': session.relay = m.state; session.relayError = m.error || null; changed(); break;
     case 'shared': break;
     case 'unshared':
       if (b && !b.owner) { unbind(b); toast(`${b.doc.name} is no longer shared — your copy is now local`, 'warn', 'LIVE'); }

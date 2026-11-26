@@ -43,7 +43,7 @@ const ok = (c, m) => { if (c) { pass++; console.log('  \x1b[32m✓\x1b[0m', m); 
 
   let err = null; const t2 = Date.now();
   try { await BAD.call('collab:join', { code: 'AAAA-BBBB-CCCC-DDDD', name: 'mallory' }); } catch (e) { err = e.message; }
-  ok(err && /No session found/.test(err), `a wrong code finds no session (${Date.now() - t2} ms): "${(err || '').slice(0, 60)}…"`);
+  ok(err && /No session/.test(err), `a wrong code finds no session (${Date.now() - t2} ms): "${(err || '').slice(0, 60)}…"`);
 
   await H.call('collab:leave');
   ok(await waitFor(() => guestMsgs.some((m) => m.type === 'ended')), 'guest notified when the host ends the session');

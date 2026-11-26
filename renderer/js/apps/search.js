@@ -6,7 +6,7 @@ import { confirm, toast, fail } from '../core/ui.js';
 import { fileGlyph } from './editor.js';
 
 export default {
-  id: 'search', title: 'Search', icon: 'search', desc: 'Project-wide search & replace', size: [520, 560], min: [300, 220], key: 'Ctrl+Shift+F',
+  id: 'search', title: 'Search', icon: 'search', desc: 'Project-wide search & replace', size: [520, 560], min: [300, 220], key: 'Ctrl+Shift+H',
   create(win, state) {
     const opt = { regex: !!state.regex, caseSensitive: !!state.caseSensitive, wholeWord: !!state.wholeWord };
     let last = null; const collapsed = new Set(); let seq = 0;

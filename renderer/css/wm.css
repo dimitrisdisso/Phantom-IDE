@@ -1,5 +1,5 @@
 /* PHANTOM — window manager, overlays, boot sequence */
-.pw { position: absolute; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--line2); min-width: 220px; min-height: 120px; box-shadow: 0 14px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.6); contain: layout paint; transition: box-shadow var(--t), border-color var(--t); }
+.pw { position: absolute; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--line2); min-width: 140px; min-height: 80px; box-shadow: 0 14px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.6); contain: layout paint; transition: box-shadow var(--t), border-color var(--t); }
 .pw.focus { border-color: rgba(var(--accent-rgb), .65); box-shadow: 0 18px 50px rgba(0,0,0,.7), var(--glow), 0 0 0 1px rgba(0,0,0,.6); }
 .pw.focus::before, .pw.focus::after { content: ""; position: absolute; width: 9px; height: 9px; pointer-events: none; z-index: 3; border: 1px solid var(--accent); filter: drop-shadow(0 0 3px rgba(var(--accent-rgb), .8)); }
 .pw.focus::before { left: -3px; top: -3px; border-right: 0; border-bottom: 0; }
@@ -134,3 +134,23 @@ body.wm-busy { cursor: grabbing; }
 .wswitch-it:hover { border-color: var(--line3); }
 .wswitch-it.on { border-color: var(--accent); background: rgba(var(--accent-rgb), .1); box-shadow: var(--glow); opacity: 1; }
 .wswitch-it.on .ic { color: var(--accent); }
+
+/* Full screen (Ctrl+Shift+F): one window covers everything, the chrome is hidden */
+body.win-full { grid-template-rows: minmax(0, 1fr); }
+body.win-full #topbar, body.win-full #taskbar, body.win-full #dock { display: none; }
+body.win-full #stage { grid-template-columns: minmax(0, 1fr); }
+.pw.fullscreen { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; z-index: 45000 !important; border-width: 0; box-shadow: none; transition: none; }
+.pw.fullscreen::before, .pw.fullscreen::after, .pw.fullscreen .pw-rz { display: none; }
+
+/* Dialogs, menus and pop-ups stay inside small screens */
+.modal { min-width: min(380px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); overflow: auto; }
+@media (max-height: 520px) { .modal { top: 12px; } .palette { top: 12px; max-height: calc(100vh - 24px); } }
+.ctx { max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto; }
+.ctx .it { flex: none; }
+
+/* Narrow windows: the title shortens first; the window buttons always stay visible. */
+.pw-title { container-type: inline-size; }
+.pw-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pw-ctrl { margin-left: auto; }
+@container (max-width: 230px) { .pw-ctrl button.pin, .pw-badge { display: none; } .pw-ctrl button { width: 22px; } }
+@container (max-width: 170px) { .pw-icon { display: none; } }

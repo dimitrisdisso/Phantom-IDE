@@ -14,6 +14,14 @@ let Hyperswarm = null;
 try { Hyperswarm = require('hyperswarm'); } catch { /* optional: same-network only */ }
 const P2P_ENABLED = () => !!Hyperswarm && process.env.PHANTOM_P2P !== '0';
 const P2P_TIMEOUT = Number(process.env.PHANTOM_P2P_TIMEOUT) || 30000;
+const { relayConnect, relayHost } = require('../relay');
+// The Cloudflare relay (see relay/). Set "phantomRelay" in package.json to your deployed
+// wss:// URL; PHANTOM_RELAY overrides it (tests, self-hosting). Empty = no relay fallback.
+const RELAY_URL = () => {
+  if (process.env.PHANTOM_RELAY !== undefined) return process.env.PHANTOM_RELAY.trim();
+  try { return String(require(path.join(__dirname, '..', '..', 'package.json')).phantomRelay || '').trim(); } catch { return ''; }
+};
+const RELAY_DELAY = Number(process.env.PHANTOM_RELAY_DELAY ?? 2500); // give the direct link a head start
 const dgram = require('dgram');
 const { run } = require('../util');
 const os = require('os');
@@ -43,10 +51,20 @@ const deriveKey = (code) => crypto.scryptSync(normCode(code), 'phantom-collab-v1
 const deriveTopic = (code) => crypto.scryptSync(normCode(code), 'phantom-collab-topic-v1', 32, { N: 16384, r: 8, p: 1 });
 
 /** Guest side: find the host of `topic` on the DHT. Resolves with the first connection. */
-function p2pConnect(swarm, topic, ms) {
+function p2pConnect(swarm, topic, ms, ctl = {}) {
   return new Promise((resolve, reject) => {
     let done = false;
-    const timer = setTimeout(() => { if (done) return; done = true; reject(new Error('No session found on the internet for this code. Check the code, and that the host has START SESSION running and is online.')); }, ms);
+    const giveUp = () => {
+      if (done) return; done = true;
+      // Hyperswarm lists peers it discovered even when it could not connect to them.
+      const found = swarm.peers && swarm.peers.size > 0;
+      reject(new Error(found
+        ? 'Found the host on the internet, but your two networks would not allow a direct connection.'
+        : 'No session found on the internet for this code. Check the code, and that the host has START SESSION running and is online.'));
+    };
+    let timer = setTimeout(giveUp, ms);
+    // Lets the caller stop waiting early (e.g. the relay already said nobody hosts this code).
+    ctl.shorten = (ms2) => { if (done) return; clearTimeout(timer); timer = setTimeout(giveUp, ms2); };
     swarm.on('connection', (conn) => {
       conn.on('error', () => {});
       if (done) { conn.destroy(); return; } // only one host per code
@@ -58,6 +76,19 @@ function p2pConnect(swarm, topic, ms) {
     catch (e) { done = true; clearTimeout(timer); reject(e); }
   });
 }
+/** Turn the per-route failures of a join into one message a person can act on. */
+function explainJoinFailure(e, { relayUrl }) {
+  const errs = (e.errors || [e]).filter((x) => x && x.code !== 'SKIPPED');
+  const noSession = errs.some((x) => x.code === 'NO_SESSION');
+  const foundP2P = errs.some((x) => /Found the host/.test(x.message));
+  if (noSession && !foundP2P) return new Error("No session with this code is running. Check the code, and that the host's Live Session window says Online (a session ends when the host closes PHANTOM or clicks END SESSION).");
+  const relayErr = errs.find((x) => /relay/.test(x.message));
+  if (relayUrl && relayErr) return new Error(`${foundP2P ? 'Found the host, but your networks would not allow a direct connection, and ' : 'Could not reach the host directly, and '}the relay failed too (${relayErr.message}). Check your internet connection.`);
+  if (!relayUrl && foundP2P) return new Error('Found the host, but your two networks would not allow a direct connection, and this PHANTOM has no relay configured. Deploy the relay (relay/README.md) and set "phantomRelay" in package.json on both computers.');
+  if (errs.length === 1) return errs[0];
+  return new Error(errs.map((x) => x.message).join('\n\n'));
+}
+
 /** First attempt to succeed wins; any later winner is closed. Rejects with the most useful error. */
 function firstOf(attempts) {
   return new Promise((resolve, reject) => {
@@ -67,7 +98,11 @@ function firstOf(attempts) {
       settled = true; resolve(r);
     }, (e) => {
       errs[i] = e;
-      if (--left === 0 && !settled) { settled = true; reject(errs.length > 1 ? new Error(errs.map((x) => x.message).join('\n\n')) : errs[0]); }
+      if (--left === 0 && !settled) {
+        settled = true;
+        const err = errs.length > 1 ? new Error(errs.filter(Boolean).map((x) => x.message).join('\n\n')) : errs[0];
+        err.errors = errs; reject(err);
+      }
     }));
   });
 }
@@ -375,6 +410,7 @@ module.exports = (core) => {
       for (const p of cur.peers.values()) { try { if (p.ready) p.socket.write(seal(cur.key, { type: 'ended', reason: 'the host ended the session' })); p.socket.end(); } catch { /* gone */ } }
       try { if (cur.server) cur.server.close(); } catch { /* closed */ }
       try { if (cur.udp) cur.udp.close(); } catch { /* closed */ }
+      if (cur.relay) setTimeout(() => cur.relay.close(), 300);
     } else if (cur.socket) { cur.closing = true; cur.socket.end(); }
     // Give the goodbye frames a moment to flush before tearing the DHT node down.
     if (cur.swarm) setTimeout(() => cur.swarm.destroy().catch(() => {}), 300);
@@ -408,8 +444,17 @@ module.exports = (core) => {
         s.udp = startResponder(s);
       }
       if (useP2P) startSwarmHost(s, code);
+      const relayUrl = p2p ? RELAY_URL() : '';
+      s.relayState = relayUrl ? 'connecting' : 'off';
+      if (relayUrl) {
+        const sess = s;
+        sess.relay = relayHost(relayUrl, deriveTopic(code), {
+          onStream: (st) => { if (s === sess) acceptSocket(st); else st.destroy(); },
+          onState: (state, error) => { if (s !== sess || (sess.relayState === state && !error)) return; sess.relayState = state; toUI({ type: 'relay', state, error }); if (state === 'online') core.event('COLLAB', 'session reachable through the relay'); }
+        });
+      }
       core.event('COLLAB', `hosting${server ? ` on port ${p}` : ''}${useP2P ? ' + internet' : ''}`);
-      return { role: 'host', code, port: s.port, p2p: s.p2p, addresses: lanAddresses(), me: peerInfo(s.me), peers: peerList(), docs: [], firewall: await firewallStatus().catch(() => ({ supported: false })) };
+      return { role: 'host', code, port: s.port, p2p: s.p2p, relay: s.relayState, addresses: lanAddresses(), me: peerInfo(s.me), peers: peerList(), docs: [], firewall: await firewallStatus().catch(() => ({ supported: false })) };
     },
 
     'collab:join': async ({ address, code, name, p2p = true } = {}) => {
@@ -418,18 +463,32 @@ module.exports = (core) => {
       // The address is optional: without one we find the host over the internet by the code alone.
       const targets = String(address || '').trim() ? parseTargets(address) : [];
       const useP2P = p2p && P2P_ENABLED();
-      if (!targets.length && !useP2P) throw new Error('Internet joining is unavailable in this build — type the host\'s address');
+      const relayUrl = p2p ? RELAY_URL() : '';
+      if (!targets.length && !useP2P && !relayUrl) throw new Error('Internet joining is unavailable in this build — type the host\'s address');
       const key = deriveKey(code);
       const attempts = [];
       let swarm = null;
       if (targets.length) attempts.push(connectFirst(targets, 8000).then((r) => ({ ...r, via: 'lan' })));
-      if (useP2P) { swarm = new Hyperswarm(); attempts.push(p2pConnect(swarm, deriveTopic(code), P2P_TIMEOUT)); }
+      const topic = (useP2P || relayUrl) ? deriveTopic(code) : null;
+      const ctl = {};
+      if (useP2P) { swarm = new Hyperswarm(); attempts.push(p2pConnect(swarm, topic, P2P_TIMEOUT, ctl)); }
+      // Relay fallback: starts a moment later so a direct link wins when it can.
+      let settled = false;
+      if (relayUrl) {
+        attempts.push(new Promise((r) => setTimeout(r, attempts.length ? RELAY_DELAY : 0))
+          .then(() => { if (settled) { const e = new Error('not needed'); e.code = 'SKIPPED'; throw e; } return relayConnect(relayUrl, topic, 15000); })
+          .catch((e) => { if (e.code === 'NO_SESSION' && ctl.shorten) ctl.shorten(6000); throw e; }));
+      }
       let picked;
-      try { picked = await firstOf(attempts); } catch (e) { if (swarm) swarm.destroy().catch(() => {}); throw e; }
+      try { picked = await firstOf(attempts); }
+      catch (e) {
+        if (swarm) swarm.destroy().catch(() => {});
+        throw explainJoinFailure(e, { relayUrl });
+      } finally { settled = true; }
       const { socket, host, port, via } = picked;
       if (swarm && via !== 'p2p') { swarm.destroy().catch(() => {}); swarm = null; }
       if (socket.setNoDelay) { socket.setNoDelay(true); socket.setKeepAlive(true, 15000); }
-      const where = via === 'p2p' ? 'the host' : `${host}:${port}`;
+      const where = via === 'p2p' || via === 'relay' ? 'the host' : `${host}:${port}`;
       const welcome = await new Promise((resolve, reject) => {
         const timer = setTimeout(() => { socket.destroy(); reject(new Error(`${where} accepted the connection but never answered. Is it a PHANTOM session?`)); }, 10000);
         socket.once('error', (e) => { clearTimeout(timer); reject(new Error(e.message)); });
@@ -438,7 +497,7 @@ module.exports = (core) => {
         socket.write(seal(key, { type: 'hello', name: cleanName(name, os.userInfo().username), v: 1 }));
       }).catch((e) => { if (swarm) swarm.destroy().catch(() => {}); throw e; });
       socket.removeAllListeners('close'); socket.removeAllListeners('error');
-      const hostStr = via === 'p2p' ? 'internet (peer-to-peer)' : host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
+      const hostStr = via === 'p2p' ? 'internet (peer-to-peer)' : via === 'relay' ? 'internet (relay)' : host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
       s = { role: 'guest', key, socket, swarm, via, me: welcome.me, hostAddress: hostStr };
       socket.on('error', () => {});
       socket.on('close', () => {
@@ -492,7 +551,7 @@ module.exports = (core) => {
 
     'collab:status': async () => {
       if (!s) return { role: null };
-      if (s.role === 'host') return { role: 'host', code: s.code, port: s.port, p2p: s.p2p, addresses: lanAddresses(), me: peerInfo(s.me), peers: peerList(), docs: docList(), firewall: await firewallStatus().catch(() => ({ supported: false })) };
+      if (s.role === 'host') return { role: 'host', code: s.code, port: s.port, p2p: s.p2p, relay: s.relayState, addresses: lanAddresses(), me: peerInfo(s.me), peers: peerList(), docs: docList(), firewall: await firewallStatus().catch(() => ({ supported: false })) };
       return { role: 'guest', host: s.hostAddress, me: s.me };
     }
   };

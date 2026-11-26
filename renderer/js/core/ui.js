@@ -104,8 +104,8 @@ export function menu(x, y, items) {
   root().appendChild(el);
   ctxEl = el;
   const r = el.getBoundingClientRect();
-  el.style.left = Math.min(x, innerWidth - r.width - 4) + 'px';
-  el.style.top = Math.min(y, innerHeight - r.height - 4) + 'px';
+  el.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + 'px';
+  el.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + 'px';
 }
 document.addEventListener('mousedown', (e) => { if (ctxEl && !ctxEl.contains(e.target)) closeMenu(); }, true);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
