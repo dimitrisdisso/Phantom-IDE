@@ -5,6 +5,7 @@ import { project, pickProject } from '../core/project.js';
 import { menu, prompt, confirm, toast, fail } from '../core/ui.js';
 import { wm } from '../core/wm.js';
 import { fileGlyph } from './editor.js';
+import * as live from '../core/collab.js';
 
 const HIDE = new Set(['.git', '.DS_Store', 'node_modules']);
 
@@ -107,11 +108,16 @@ export default {
         { header: basename(p) },
         !isDir ? { label: 'Open', action: () => bus.emit('open-file', p, {}) } : null,
         !isDir ? { label: 'Open in new editor', action: () => bus.emit('open-file', p, { newWindow: true }) } : null,
+        !row && root ? { label: 'Open Agent Flow Here', action: async () => {
+          await wm.open('flow');
+          bus.emit('flow:add-folder', p);
+        } } : null,
         !isDir && /^(md|markdown)$/.test(e2) ? { label: 'Markdown preview', action: () => wm.open('markdown', { state: { path: p } }) } : null,
         !isDir && /^json/.test(e2) ? { label: 'JSON viewer', action: () => wm.open('json', { state: { path: p } }) } : null,
         !isDir && /\.(db|sqlite3?|db3)$/i.test(p) ? { label: 'Open in database explorer', action: () => wm.open('db', { state: { conn: { type: 'sqlite', file: p } } }) } : null,
         !isDir && /\.log$/i.test(p) ? { label: 'Tail in log viewer', action: () => wm.open('logs', { state: { file: p } }) } : null,
         !isDir && /\.(m?js|cjs)$/.test(p) ? { label: 'Debug with Node', action: () => wm.open('debug', { state: { program: p, autostart: true } }) } : null,
+        !isDir && live.session.role && !live.liveDocFor(p) ? { label: 'Share in live session', action: () => live.share(p).catch((er) => fail(er, 'SHARE')) } : null,
         isDir ? { label: 'Open terminal here', action: () => wm.open('terminal', { state: { cwd: p } }) } : { label: 'Open terminal in folder', action: () => wm.open('terminal', { state: { cwd: dirname(p) } }) },
         isDir ? { label: 'Search in folder', action: () => wm.open('search', { state: { include: rel(project.root, p) ? rel(project.root, p) + '/**' : '' } }) } : null,
         isDir && row ? { label: 'Set as explorer root', action: () => { state.root = p; setRoot(p); } } : null,

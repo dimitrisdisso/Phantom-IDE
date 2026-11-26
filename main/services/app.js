@@ -18,7 +18,8 @@ module.exports = (core) => {
         shell: process.env.SHELL || process.env.COMSPEC || null,
         tools: {
           git, rg: !!which('rg'), ssh: !!which('ssh'), node: !!which('node'), python: !!(which('python3') || which('python')),
-          docker: !!which('docker'), cargo: !!which('cargo'), go: !!which('go')
+          docker: !!which('docker'), cargo: !!which('cargo'), go: !!which('go'),
+          claude: !!which('claude'), copilot: !!which('copilot'), codex: !!which('codex')
         },
         electron: !!core.hooks.window
       };
