@@ -1,0 +1,78 @@
+{
+  "name": "phantom-ide",
+  "productName": "PHANTOM",
+  "version": "1.0.0",
+  "description": "PHANTOM \u2014 a hacker-workstation IDE built around a floating window system.",
+  "main": "main/main.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/k4paz/Ohh-Phantom-IDE.git"
+  },
+  "bugs": {
+    "url": "https://github.com/k4paz/Ohh-Phantom-IDE/issues"
+  },
+  "homepage": "https://github.com/k4paz/Ohh-Phantom-IDE",
+  "keywords": ["electron", "ide", "developer-tools", "terminal", "monaco"],
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node tools/backend-test.js",
+    "test:backend": "node tools/backend-test.js",
+    "dist": "npx --yes electron-builder@26"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.15.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "dompurify": "^3.2.4",
+    "marked": "^15.0.7",
+    "monaco-editor": "0.52.2",
+    "mysql2": "^3.12.0",
+    "pg": "^8.13.3",
+    "sql.js": "^1.12.0",
+    "systeminformation": "^5.25.11",
+    "ws": "^8.18.1"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0"
+  },
+  "build": {
+    "appId": "dev.phantom.ide",
+    "productName": "PHANTOM",
+    "files": [
+      "main/**",
+      "renderer/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**",
+      "node_modules/sql.js/dist/**"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=20.17"
+  }
+}
