@@ -8,13 +8,14 @@ import { menu, palette, toast, prompt, confirm, tooltip, fail } from './ui.js';
 import { plot } from './graph.js';
 import { dirtyDocs, normPath } from './docs.js';
 import * as run from './run.js';
+import * as live from './collab.js';
 
 export const DOCK = [
   ['editor', 'explorer', 'search', 'terminal', 'git'],
   ['debug', 'tests', 'build'],
   ['api', 'db', 'json', 'markdown'],
   ['sysmon', 'net', 'procs', 'logs', 'events'],
-  ['audit', 'ssh', 'arch', 'agents']
+  ['collab', 'ssh', 'audit', 'arch', 'agents']
 ];
 
 // Fractional layouts (desk 1×1) — scaled to the real desktop by restoreLayout.
@@ -92,6 +93,9 @@ export function commands() {
     { group: 'run', label: 'Run: Stop', icon: 'stop', key: 'Shift+F5', run: run.stop },
     { group: 'run', label: 'Run: Restart', icon: 'refresh', key: 'Ctrl+Shift+F5', run: run.restart },
     { group: 'run', label: 'Run: Set project run command…', icon: 'settings', run: run.configure },
+    { group: 'live', label: 'Live: Open session window (host / join)', icon: 'collab', run: () => wm.open('collab') },
+    ...(live.session.role ? [{ group: 'live', label: 'Live: Share current file', icon: 'collab', run: () => { const f = run.activeFile(); if (f) live.share(f).catch(fail); else toast('open a file first', 'warn'); } },
+      { group: 'live', label: live.session.role === 'host' ? 'Live: End session' : 'Live: Leave session', icon: 'close', run: () => live.leave() }] : []),
     { group: 'window', label: 'Tile windows', icon: 'layout', key: 'Ctrl+Alt+T', run: () => wm.tile() },
     { group: 'window', label: 'Cascade windows', icon: 'layout', run: () => wm.cascade() },
     { group: 'window', label: 'Show desktop', icon: 'layout', key: 'Ctrl+Alt+D', run: () => wm.showDesktop() },
@@ -326,12 +330,15 @@ function buildTaskbar() {
     status.innerHTML = `<span>${total} win · ws ${wm.active + 1}</span>` +
       (st.tasks ? `<span class="warn"><span class="spin"></span> ${st.tasks} task${st.tasks > 1 ? 's' : ''}</span>` : '') +
       (st.pty ? `<span class="${st.pty.native ? 'ok' : 'warn'}" title="${st.pty.native ? 'node-pty' : esc(st.pty.error || '')}">pty:${st.pty.native ? 'native' : 'bridge'}</span>` : '') +
+      (live.session.role ? `<button class="ok live-status" title="live session">⇄ LIVE ${live.session.peers.length}</button>` : '') +
       `<span class="ok">● online</span>`;
   };
   call('pty:info').then((i) => { st.pty = i; renderStatus(); }).catch(() => {});
   on('tasks:exit', () => call('tasks:running').then((r) => { st.tasks = r.length; renderStatus(); }));
   bus.on('tasks:started', () => call('tasks:running').then((r) => { st.tasks = r.length; renderStatus(); }));
   bus.on('wm:changed', renderStatus);
+  bus.on('collab:changed', renderStatus);
+  status.addEventListener('click', (e) => { if (e.target.closest('.live-status')) wm.open('collab'); });
   renderStatus();
 }
 

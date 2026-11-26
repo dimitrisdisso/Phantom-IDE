@@ -7,6 +7,7 @@ import { project } from '../core/project.js';
 import { menu, toast, fail, choice, prompt, splitter } from '../core/ui.js';
 import { wm } from '../core/wm.js';
 import * as run from '../core/run.js';
+import * as live from '../core/collab.js';
 
 export default {
   id: 'editor', title: 'Editor', icon: 'editor', desc: 'Monaco code editor with tabs & split', size: [860, 560], key: 'Ctrl+P',
@@ -48,7 +49,14 @@ export default {
           const T = monaco.editor.MouseTargetType;
           if (g.active && (e.target.type === T.GUTTER_GLYPH_MARGIN || (e.target.type === T.GUTTER_LINE_DECORATIONS))) toggleBreakpoint(g.active, e.target.position.lineNumber);
         });
-        g.editor.onDidChangeCursorSelection(() => renderStatus(g));
+        g.editor.onDidChangeCursorSelection((e) => {
+          renderStatus(g);
+          const m = g.editor.getModel();
+          if (m && live.session.role) {
+            const sel = e.selection;
+            bus.emit('editor:cursor', { model: m, anchor: m.getOffsetAt({ lineNumber: sel.selectionStartLineNumber, column: sel.selectionStartColumn }), head: m.getOffsetAt(sel.getPosition()) });
+          }
+        });
         g.editor.onDidFocusEditorText(() => setActive(g));
         g.decos = g.editor.createDecorationsCollection([]);
       } else {
@@ -81,7 +89,7 @@ export default {
     }
 
     function setActive(g) { active = g; groups.forEach((x) => x.el.classList.toggle('on', x === g && groups.length > 1)); updateSub(); }
-    function updateSub() { const p = active && active.active; win.setSub(p ? rel(project.root, p) : ''); }
+    function updateSub() { const p = active && active.active; win.setSub(!p ? '' : live.isCollabPath(p) ? `⇄ live · ${basename(p)}` : rel(project.root, p)); }
 
     function layout() {
       root.innerHTML = '';
@@ -99,7 +107,7 @@ export default {
       for (const p of g.files) {
         const d = docs.get(p);
         const dirty = d && d.dirty; const conflict = d && d.conflict;
-        const t = h('button.tab' + (p === g.active ? '.on' : '') + (dirty ? '.dirty' : ''), { title: p, html: `<span class="fi fi-${esc(ext(p))}">${fileGlyph(p)}</span><span>${esc(basename(p))}</span>${conflict ? '<span class="c-amber">!</span>' : ''}<span class="x">${dirty ? '●' : '×'}</span>` });
+        const t = h('button.tab' + (p === g.active ? '.on' : '') + (dirty ? '.dirty' : ''), { title: p, html: `<span class="fi fi-${esc(ext(p))}">${fileGlyph(p)}</span><span>${esc(basename(p))}</span>${live.isCollabPath(p) || live.liveDocFor(p) ? '<span class="live-dot" title="live-shared">⇄</span>' : ''}${conflict ? '<span class="c-amber">!</span>' : ''}<span class="x">${dirty ? '●' : '×'}</span>` });
         t.addEventListener('click', (e) => { if (e.target.closest('.x')) closeTab(g, p); else activate(g, p); });
         t.addEventListener('auxclick', (e) => { if (e.button === 1) closeTab(g, p); });
         t.addEventListener('contextmenu', (e) => { e.preventDefault(); tabMenu(g, p, e); });
@@ -125,7 +133,7 @@ export default {
         pos = `Ln ${lines.length}, Col ${lines[lines.length - 1].length + 1}`;
       }
       const bp = breakpoints.get(p);
-      g.status.innerHTML = `<span>${pos}${sel}</span><span>${esc(lang)}</span><span>${d.eol || 'LF'}</span><span>UTF-8</span><span>spaces:${settings.tabSize}</span>${bp && bp.size ? `<span class="c-red">● ${bp.size} bp</span>` : ''}<span class="sp"></span>${d.conflict ? '<span class="c-amber">changed on disk</span>' : d.dirty ? '<span class="c-amber">● modified</span>' : '<span class="c-acc">saved</span>'}`;
+      g.status.innerHTML = `<span>${pos}${sel}</span><span>${esc(lang)}</span><span>${d.eol || 'LF'}</span><span>UTF-8</span><span>spaces:${settings.tabSize}</span>${bp && bp.size ? `<span class="c-red">● ${bp.size} bp</span>` : ''}${live.liveDocFor(p) ? `<span class="c-cyan">⇄ LIVE · ${live.session.peers.length} in session</span>` : live.isCollabPath(p) ? '<span class="c-amber">⇄ offline copy</span>' : ''}<span class="sp"></span>${d.virtual ? (live.liveDocFor(p) ? '<span class="c-cyan">owner saves</span>' : '') : d.conflict ? '<span class="c-amber">changed on disk</span>' : d.dirty ? '<span class="c-amber">● modified</span>' : '<span class="c-acc">saved</span>'}`;
     }
 
     function decorate(g) {
@@ -244,6 +252,8 @@ export default {
         isJson ? { label: 'Open in JSON viewer', action: () => wm.open('json', { state: { path: p } }) } : null,
         project.gitRoot ? { label: 'Diff against HEAD', action: () => wm.open('diff', { state: { root: project.gitRoot, file: p } }) } : null,
         /\.(m?js|cjs)$/.test(p) ? { label: 'Debug this file', action: () => wm.open('debug', { state: { program: p, autostart: true } }) } : null,
+        live.session.role && !live.isCollabPath(p) && !live.liveDocFor(p) ? { label: 'Share in live session', action: () => live.share(p).catch((e) => fail(e, 'SHARE')) } : null,
+        live.liveDocFor(p) && live.liveDocFor(p).owner ? { label: 'Stop sharing', action: () => live.unshare(live.liveDocFor(p).id) } : null,
         '-',
         { label: 'Copy path', action: () => copy(p) },
         { label: 'Copy relative path', action: () => copy(rel(project.root, p)) },
@@ -282,7 +292,10 @@ export default {
 
     // reactive updates
     offs.push(bus.on('doc:dirty', (d) => { for (const g of groups) if (g.files.includes(d.path)) { renderTabs(g); if (g.active === d.path) renderStatus(g); } }));
-    offs.push(bus.on('doc:changed', (d) => { for (const g of groups) if (g.ta && g.active === d.path && !g.syncing && g.ta.value !== d.getValue()) g.ta.value = d.getValue(); }));
+    offs.push(bus.on('collab:remoteop', ({ model, op }) => { for (const g of groups) { const d = docs.get(g.active); if (g.ta && d && d.model === model) g.pendingSel = [op.transformIndex(g.ta.selectionStart), op.transformIndex(g.ta.selectionEnd)]; } }));
+    offs.push(bus.on('doc:changed', (d) => { for (const g of groups) if (g.ta && g.active === d.path && !g.syncing && g.ta.value !== d.getValue()) { const [a, z] = g.pendingSel || [g.ta.selectionStart, g.ta.selectionEnd]; g.pendingSel = null; g.ta.value = d.getValue(); g.ta.setSelectionRange(Math.min(a, g.ta.value.length), Math.min(z, g.ta.value.length)); } }));
+    offs.push(bus.on('collab:bound', (p) => { for (const g of groups) if (g.files.includes(p)) { renderTabs(g); renderStatus(g); } }));
+    offs.push(bus.on('collab:changed', () => { for (const g of groups) renderStatus(g); }));
     offs.push(bus.on('bp:changed', (p) => { for (const g of groups) if (g.active === p) { decorate(g); renderStatus(g); } }));
     offs.push(bus.on('debug:loc', () => { for (const g of groups) decorate(g); }));
     offs.push(bus.on('settings:changed', (k) => {

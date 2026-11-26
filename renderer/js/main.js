@@ -31,8 +31,9 @@ import audit from './apps/audit.js';
 import settingsApp from './apps/settings.js';
 import diff from './apps/diff.js';
 import agents from './apps/agents.js';
+import collab from './apps/collab.js';
 
-const APPS = [editor, terminal, explorer, sysmon, net, procs, logs, git, api, db, arch, search, markdown, json, ssh, debug, tests, build, events, audit, settingsApp, diff, agents];
+const APPS = [editor, terminal, explorer, sysmon, net, procs, logs, git, api, db, arch, search, markdown, json, ssh, debug, tests, build, events, audit, settingsApp, diff, agents, collab];
 
 window.addEventListener('error', (e) => { call('app:log', 'error', `${e.message} @ ${e.filename}:${e.lineno}`).catch(() => {}); });
 window.addEventListener('unhandledrejection', (e) => { call('app:log', 'error', String(e.reason && e.reason.stack || e.reason)).catch(() => {}); });
